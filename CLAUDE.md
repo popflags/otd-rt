@@ -282,6 +282,9 @@ the same relative settings, so it is assumed to derive from it too.
 Math (`DirectionalScale.Apply`): `delta · sqrt((dx² + r²·dy²) / (dx² + dy²))`, r = Vertical Speed / 100:
 direction unchanged, length equal to what X:Y = 1 : r would give. Tested in `DirectionalScaleTests`.
 Not done: vertical-only acceleration (owner did not ask), circle speed variation (inherent to any r ≠ 1).
+Position updates every report (1000 Hz, owner-confirmed), unlike pressure. At 28.59 px/mm one tablet unit is
+~0.12 px (~235 units/mm), so per-report deltas at slow aim speeds are a few units and their direction is coarse;
+there the plugin degrades towards the plain per-axis ratio (it cannot do worse than it).
 
 ## Ideas not yet explored
 
