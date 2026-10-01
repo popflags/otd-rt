@@ -77,6 +77,7 @@ namespace RapidTrigger
                 MaxReleaseDistance = MaxReleaseDistance,
                 DriftTimeConstant = DriftTimeConstant,
                 FastFallSpeed = FastFallSpeed,
+                FastFallPercent = FastFallPercent,
                 FastReleaseDistance = FastReleaseDistance,
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
@@ -122,16 +123,22 @@ namespace RapidTrigger
             "Keep it above the pressure noise (rt replay prints a noise estimate).")]
         public double ActivationDistance { set; get; } = 40;
 
-        [Property("Fast Fall Speed"), DefaultPropertyValue(20.0), Unit("raw/ms"), ToolTip(
-            "Fast release detector: the fastest pressure fall a drag produces. Only the part of each pressure sample's\n" +
-            "fall above this speed counts towards Fast Release Distance, so drag dips never add up.\n" +
-            "Higher = steadier drags, later tap releases. 0 = detector off.")]
-        public double FastFallSpeed { set; get; } = 20;
+        [Property("Fast Fall Speed"), DefaultPropertyValue(0.5), Unit("raw/ms"), ToolTip(
+            "Fast release detector: fixed part of the drag allowance. Falls slower than\n" +
+            "Fast Fall Speed + Fast Fall Percent of the pressure are what a drag or hold can do; only the part of each\n" +
+            "pressure sample's fall above it counts towards Fast Release Distance.\n" +
+            "Higher = steadier drags, later releases. Both 0 = detector off.")]
+        public double FastFallSpeed { set; get; } = 0.5;
 
-        [Property("Fast Release Distance"), DefaultPropertyValue(20.0), Unit("raw"), ToolTip(
-            "Fast release detector: release once the fall in excess of Fast Fall Speed adds up to this.\n" +
-            "Lower = earlier tap releases. Keep it well above the pressure noise.")]
-        public double FastReleaseDistance { set; get; } = 20;
+        [Property("Fast Fall Percent"), DefaultPropertyValue(0.25), Unit("%/ms"), ToolTip(
+            "Fast release detector: part of the drag allowance that grows with pressure (hand wobble grows with force).\n" +
+            "Higher = steadier heavy holds, later releases and missed shallow re-presses without lifting.")]
+        public double FastFallPercent { set; get; } = 0.25;
+
+        [Property("Fast Release Distance"), DefaultPropertyValue(10.0), Unit("raw"), ToolTip(
+            "Fast release detector: release once the fall in excess of the drag allowance adds up to this.\n" +
+            "Lower = earlier releases. Keep it above the pressure noise (>= 40 if pressure changes every report).")]
+        public double FastReleaseDistance { set; get; } = 10;
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +

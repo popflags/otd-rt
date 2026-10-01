@@ -14,6 +14,7 @@ namespace RapidTrigger.Tests
             ReleaseDistance = releaseDistance,
             DriftTimeConstant = 0,
             FastFallSpeed = 0,
+            FastFallPercent = 0,
         };
 
         private static bool IsRelease(TriggerEvent e) => e is TriggerEvent.Release or TriggerEvent.FastRelease or TriggerEvent.Lift;
@@ -45,7 +46,7 @@ namespace RapidTrigger.Tests
         [Fact]
         public void LiftAlwaysReleases()
         {
-            var engine = Engine(new TriggerSettings { ReleaseDistance = 100000, FastFallSpeed = 0 });
+            var engine = Engine(new TriggerSettings { ReleaseDistance = 100000, FastFallSpeed = 0, FastFallPercent = 0 });
             engine.Update(3000, 1);
             Assert.Equal(TriggerEvent.Lift, engine.Update(2, 1));
             Assert.False(engine.Pressed);
@@ -83,18 +84,18 @@ namespace RapidTrigger.Tests
         [Fact]
         public void SlowFallBelowDragSpeedNeverTriggersTheFastDetector()
         {
-            // 18 units/ms for 30 ms: 540 units down, but never faster than the 20 units/ms allowance.
+            // 9 units/ms for 30 ms: 270 units down, never faster than the allowance (0.5 + 0.25% of ~3800 = 10 units/ms).
             var engine = Engine(new TriggerSettings { ReleaseDistance = 100000 });
             HoldAt(engine, 4000);
 
-            var events = Signals.Run(engine, Signals.Ramp(4000, 3460, 30));
+            var events = Signals.Run(engine, Signals.Ramp(4000, 3730, 30));
 
             Assert.Empty(events);
         }
 
         // Defaults are tuned for pressure sampled every ~9 ms (PTK-670). With a new noisy sample every ms, noise adds
-        // up in the fast detector, and Fast Release Distance has to go back up to 40.
-        private static TriggerSettings EveryReportSampled() => new() { FastReleaseDistance = 40 };
+        // up in the fast detector: these are the settings for that case (fixed 20 units/ms allowance, distance 40).
+        private static TriggerSettings EveryReportSampled() => new() { FastFallSpeed = 20, FastFallPercent = 0, FastReleaseDistance = 40 };
 
         [Theory]
         [InlineData(9)]
@@ -111,18 +112,50 @@ namespace RapidTrigger.Tests
         }
 
         [Theory]
-        [InlineData(9)]
-        [InlineData(1)]
-        public void SlowDipsTremorAndNoiseDuringADragDoNotRelease(int sampleReports)
+        // Defaults, PTK-670 sampling: 15% dips over 400 ms + 2% tremor peak at ~11.6 units/ms, under the allowance at
+        // 5000 (13 units/ms). Real hold dips on the recording peaked at 13 units/ms at 7000-8191.
+        [InlineData(9, 0.15, 0.02)]
+        // The harsher made-up drag (30% dips + 3% tremor, ~20 units/ms) only holds with the fixed 20 units/ms
+        // allowance. That is the trade made for faster releases and re-presses without lifting.
+        [InlineData(1, 0.30, 0.03)]
+        public void SlowDipsTremorAndNoiseDuringADragDoNotRelease(int sampleReports, double dip, double tremor)
         {
-            // 30% dips over 400 ms, +-3% tremor at 9 Hz and +-15 noise, for 5 seconds.
             var engine = Engine(sampleReports == 1 ? EveryReportSampled() : null);
             Signals.Run(engine, Signals.Ramp(0, 5000, 60));
 
-            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(5000, 5000, 0.30, 400, 0.03, 15, seed: 1), sampleReports));
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(5000, 5000, dip, 400, tremor, 15, seed: 1), sampleReports));
 
             Assert.Empty(events);
             Assert.True(engine.Pressed);
+        }
+
+        [Fact]
+        public void HarshSyntheticDragCutsOutWithDefaults()
+        {
+            // Documents the trade: 30% dips over 400 ms + 3% tremor, sampled every 9 ms, falls faster than the
+            // default allowance at 5000.
+            var engine = Engine();
+            Signals.Run(engine, Signals.Ramp(0, 5000, 60));
+
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(5000, 5000, 0.30, 400, 0.03, 15, seed: 1)));
+
+            Assert.Contains(events, e => e.Event == TriggerEvent.FastRelease);
+        }
+
+        [Theory]
+        [InlineData(1500, 300, 70)]
+        [InlineData(1500, 400, 100)]
+        [InlineData(4000, 400, 70)]
+        [InlineData(4000, 600, 100)]
+        public void ShallowRePressesWithoutLiftingAreDetected(double low, double depth, double periodMs)
+        {
+            // Taps without lifting, sampled every 9 ms. With the fixed 20 units/ms allowance none of these released.
+            var engine = Engine();
+            Signals.Run(engine, Signals.Ramp(0, low, 20));
+
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Taps(low, low + depth, 12, periodMs)));
+
+            Assert.Equal(11, events.Count(e => e.Event == TriggerEvent.Rearm));
         }
 
         [Theory]
@@ -154,17 +187,17 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
-        public void RealTapReleasesOnItsSecondFallingSample()
+        public void RealTapReleasesOnItsFirstFallingSample()
         {
-            // A tap from the recording, one pressure sample per 9 reports: 2947 -> 2825 is still drag speed,
-            // 2825 -> 2342 is not.
+            // A tap from the recording, one pressure sample per 9 reports: 2947 -> 2825 is 122 down in 9 ms, above the
+            // allowance at 2947 (0.5 + 0.25% = 7.9 units/ms, 71 per sample) by more than 10.
             var engine = Engine();
             engine.Update(0, 1);
 
             var events = Signals.Run(engine, Signals.Samples(9, 2768, 2947, 2825, 2342, 1862, 1105, 0));
 
             Assert.Equal((0, TriggerEvent.Contact), events[0]);
-            Assert.Equal((27, TriggerEvent.FastRelease), events[1]);
+            Assert.Equal((18, TriggerEvent.FastRelease), events[1]);
         }
 
         [Fact]
@@ -223,7 +256,7 @@ namespace RapidTrigger.Tests
         {
             var engine = Engine();
             engine.Update(3000, 1);
-            Assert.Equal(TriggerEvent.None, engine.Update(2990, 0));
+            Assert.Equal(TriggerEvent.None, engine.Update(2995, 0));
             Assert.True(IsRelease(engine.Update(2700, 0)));
             Assert.False(double.IsNaN(engine.FallExcess));
             Assert.False(double.IsInfinity(engine.FallExcess));

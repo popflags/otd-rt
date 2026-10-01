@@ -37,17 +37,25 @@ namespace RapidTrigger
         public double ActivationDistance { get; set; } = 40;
 
         /// <summary>
-        /// Fast-fall detector: falls faster than this (raw units per ms) are faster than anything a drag does.
-        /// Only the part of each pressure sample's fall above this speed (times the time since the previous sample)
-        /// counts towards FastReleaseDistance. 0 = detector off.
+        /// Fast-fall detector, drag allowance: falls slower than FastFallSpeed + FastFallPercent% of the pressure
+        /// (raw units per ms) are what a drag or hold can do. Only the part of each pressure sample's fall above the
+        /// allowance (times the time since the previous sample) counts towards FastReleaseDistance.
+        /// Both 0 = detector off.
         /// </summary>
-        public double FastFallSpeed { get; set; } = 20;
+        public double FastFallSpeed { get; set; } = 0.5;
 
         /// <summary>
-        /// Fast-fall detector: release once the fall in excess of FastFallSpeed adds up to this (a one-sided CUSUM).
+        /// Fast-fall detector: the part of the drag allowance that grows with pressure, in % of the current pressure
+        /// per ms. Hand wobble grows with force: on the PTK-670 recording, hold dips at 7000-8191 fell up to
+        /// 13 raw/ms, while re-presses without lifting at lighter pressure need a smaller allowance to release.
+        /// </summary>
+        public double FastFallPercent { get; set; } = 0.25;
+
+        /// <summary>
+        /// Fast-fall detector: release once the fall in excess of the allowance adds up to this (a one-sided CUSUM).
         /// Smaller = earlier tap releases; must stay above what sensor noise can add up to.
         /// </summary>
-        public double FastReleaseDistance { get; set; } = 20;
+        public double FastReleaseDistance { get; set; } = 10;
 
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
@@ -115,7 +123,7 @@ namespace RapidTrigger
         /// <summary>Hold reference on the last pressed report (kept after a release for diagnostics).</summary>
         public double HoldReference { get; private set; }
 
-        /// <summary>Fast-fall detector state: accumulated fall in excess of FastFallSpeed.</summary>
+        /// <summary>Fast-fall detector state: accumulated fall in excess of the drag allowance.</summary>
         public double FallExcess { get; private set; }
 
         /// <summary>Time since the current press started, in milliseconds.</summary>
@@ -188,11 +196,15 @@ namespace RapidTrigger
 
             // Fast path: one-sided CUSUM. Each new pressure sample adds its fall minus what a drag could fall since the
             // previous sample; rises and slow falls drain it back to zero. Repeated values are not new samples.
+            bool fastDetector = s.FastFallSpeed > 0 || s.FastFallPercent > 0;
             bool fastFallBuilding = false;
-            if (s.FastFallSpeed > 0)
+            if (fastDetector)
             {
                 if (p != previous)
-                    FallExcess = Math.Max(0, FallExcess + (previous - p) - s.FastFallSpeed * sampleMs);
+                {
+                    double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
+                    FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * sampleMs);
+                }
                 fastFallBuilding = FallExcess > 0;
             }
 
@@ -208,7 +220,7 @@ namespace RapidTrigger
 
             if (p <= s.LiftThreshold)
                 return Release(p, TriggerEvent.Lift);
-            if (s.FastFallSpeed > 0 && FallExcess >= s.FastReleaseDistance * multiplier)
+            if (fastDetector && FallExcess >= s.FastReleaseDistance * multiplier)
                 return Release(p, TriggerEvent.FastRelease);
             if (_anchor - p >= CurrentReleaseDistance)
                 return Release(p, TriggerEvent.Release);
