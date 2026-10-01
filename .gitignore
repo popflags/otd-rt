@@ -1,0 +1,13 @@
+bin/
+obj/
+dist/
+*.user
+.vs/
+.idea/
+TestResults/
+
+# Local reference material and recordings, not part of the plugin
+otd-rt-old/
+TheSaturnCollection-main/
+logs/
+rapid-trigger-logs/
