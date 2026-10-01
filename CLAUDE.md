@@ -8,7 +8,7 @@ useful from them is summarized below.
 ## Owner and goal
 
 - Owner (GitHub `popflags`) plays rhythm/aim games with a **Wacom PTK-670 (Intuos Pro M, 2025)** running
-  **custom firmware at 1000 Hz**, on OpenTabletDriver (OTD) **0.6.x**. Develops on Linux (CachyOS) locally
+  **custom firmware at 1000 Hz**, on OpenTabletDriver (OTD) **0.6.7** (latest release; plugin targets it). Develops on Linux (CachyOS) locally
   and on Windows through Claude Code in the cloud (no IDE on Windows).
 - Requirements, in the owner's words: initial press as fast as possible, release as fast as possible,
   taps as fast as possible, "compromise as little as possible". **Drags must never cut out** (tip held
@@ -54,23 +54,38 @@ the Actions run page. The owner extracts RapidTrigger.zip into `%localappdata%\O
 and restarts OTD. Releases: bump `<Version>` in `src/RapidTrigger/RapidTrigger.csproj`, then
 `git tag -a vX.Y.Z -m ... && git push origin vX.Y.Z`. Commit messages end with the Co-Authored-By trailer.
 
-## OpenTabletDriver 0.6.6.2 facts (verified in its source)
+## OpenTabletDriver facts (verified in its source, v0.6.7 and branches as of 2026-10)
 
 - Plugin API: `IPositionedPipelineElement<IDeviceReport>` with `Consume`, `event Emit`, `Position`.
   Attributes `PluginName`, `Property`, `BooleanProperty(name, desc)`, `DefaultPropertyValue`, `ToolTip`,
   `Unit`; `[TabletReference] public TabletReference X { set; }` is injected at construction.
-  NuGet `OpenTabletDriver.Plugin` 0.6.6.2, referenced with `ExcludeAssets="runtime"`.
+  NuGet `OpenTabletDriver.Plugin` **0.6.7**, referenced with `ExcludeAssets="runtime"`.
 - Filters are constructed on every settings apply (properties set before the first `Consume`).
   The output mode disposes `IDisposable` elements.
 - Pipeline: PreTransform elements → transform → PostTransform elements → output, in profile list order.
   `BindingHandler` is **appended last** as a PostTransform element.
-- **Tip binding** (`ThresholdBindingState`): `pressed = pressure% > TipActivationThreshold` (strictly
-  greater), then pressure is remapped above the threshold. Consequence: if a filter passes raw pressure
-  and the user's tip threshold is above 0%, presses are delayed until raw pressure exceeds it. That is
-  why the plugin reports **full MaxPressure while pressed** by default (Preserve Pressure off).
+- **Tip binding in 0.6.7** (`ThresholdBindingState`, inside the BindingHandler, so *after* all filters):
+  `pressed = pressure% > TipActivationThreshold` (strictly greater; 0.6.7 added the special case that a
+  100% threshold fires at exactly max pressure), then pressure is remapped above the threshold.
+  Consequence: if a filter passes raw pressure and the tip threshold is above 0%, presses are delayed
+  until raw pressure exceeds it. That is why the plugin reports **full MaxPressure while pressed** by
+  default (Preserve Pressure off).
+- **Coming after 0.6.7 (0.6.x branch, commit ea34ceee, 2026-07, unreleased):** the threshold moves to
+  `PressureRewriteFilter`, which is **prepended before all user filters**
+  (`elements.Prepend(pressureRewriteFilter).Append(bindingHandler)`). It remaps
+  `p → max·(p% − t)/(1 − t)` and sets anything ≤ t to 0, except reports already at max. The binding then
+  fires on `pressure > 0`. With a non-zero tip threshold, Rapid Trigger would see remapped pressure
+  (later contact, scaled distances, noise amplified by 1/(1 − t)). **Users must set the tip threshold to
+  0%**, which is identity in both versions. If that release ships, consider detecting/warning about it.
+- 0.6.7 vs 0.6.6.2 otherwise: OutputMode builds the chain as Pre → transform → Post in one list (same
+  order), Dispose pattern changes, wheel binding rework, PTK-670 config gained `Wheels` (and on 0.6.x
+  `MinRotation/MaxRotation`), and the IntuosV3 pen report parsing is unchanged.
+- **master = 0.7.0.0**, last commit 2025-12-05, nearly dormant, unreleased. The API is reorganized: no
+  separate Plugin assembly, namespaces `OpenTabletDriver.*`, filters implement `IDevicePipelineElement`.
+  Not useful now; porting would mean rewriting only `RapidTriggerFilter.cs` (the engine is OTD-free).
 - Out-of-range: `OutOfRangeReport` (struct, namespace `OpenTabletDriver.Plugin.Tablet`). The binding
   handler only releases *pen buttons* on it, not the tip.
-- PTK-670 config: `MaxPressure` 8191, digitizer 52600×29600, parser
+- PTK-670 config (0.6.7): `MaxPressure` 8191, digitizer 52600×29600, parser
   `OpenTabletDriver.Configurations.Parsers.Wacom.IntuosV3.IntuosV3ReportParser`. `0x1F` reports with
   `data[1]==0x01` → `IntuosV3Report` (a **struct**: `ITabletReport, IProximityReport, ITiltReport,
   IEraserReport`, pressure = ushort at byte 7, `HoverDistance` byte 13). Other `0x1F` reports, i.e. out of
@@ -165,8 +180,9 @@ Findings that shaped it:
 
 ### `otd-rt-old/`: the previous plugin and its discarded variants
 
-Forked from Kuuuube/Rapid_Trigger. It contains `.modules/OpenTabletDriver-0.6.x` (OTD 0.6.6.2 source,
-what the old csproj referenced) and `.modules/OpenTabletDriver-master`. The variants are full `.cs` files
+Forked from Kuuuube/Rapid_Trigger. It contains `.modules/OpenTabletDriver-0.6.x` (an 0.6.x snapshot
+versioned 0.6.6.2, what the old csproj referenced) and `.modules/OpenTabletDriver-master`. For current
+OTD source, clone https://github.com/OpenTabletDriver/OpenTabletDriver (tags v0.6.7, branches 0.6.x/master). The variants are full `.cs` files
 saved with odd extensions in `otd-rt-old/Rapid_Trigger/`. All were `PostTransform`, output raw pressure
 (min 1) while pressed, and counted time in **reports**, not ms. Oldest first:
 

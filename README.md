@@ -1,6 +1,6 @@
 # Rapid Trigger for OpenTabletDriver
 
-Rapid trigger for the pen tip on OpenTabletDriver 0.6.x, tuned for high report rate tablets
+Rapid trigger for the pen tip on OpenTabletDriver 0.6.x (built against 0.6.7), tuned for high report rate tablets
 (developed on a Wacom PTK-670 running at 1000 Hz). Taps press and release as early as the pressure
 signal allows, while drags stay held through normal pressure wobble.
 
@@ -67,8 +67,10 @@ Restart OpenTabletDriver. Then, in the Filters tab:
 1. Remove older Rapid Trigger plugin versions.
 2. Enable **Rapid Trigger** and put it first in the filter list, ahead of any smoothing or
    interpolation filter.
-3. Leave *Preserve Pressure* off for games. If you turn it on, set the pen tip threshold in the
-   Bindings tab to 0%, otherwise presses wait until pressure passes that threshold.
+3. In the Bindings tab, set the **pen tip threshold to 0%**. On 0.6.7 the plugin's full-pressure output
+   works with any threshold, but upcoming OpenTabletDriver versions apply the threshold *before* all
+   filters. A non-zero threshold would then delay the first press and distort the distances.
+4. Leave *Preserve Pressure* off for games.
 
 ## Tuning: record, then calibrate
 

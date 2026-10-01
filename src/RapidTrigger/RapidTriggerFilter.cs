@@ -167,8 +167,8 @@ namespace RapidTrigger
         public double HoldReleaseMultiplier { set; get; } = 1;
 
         [BooleanProperty("Preserve Pressure", ""), DefaultPropertyValue(false), ToolTip(
-            "Off: while pressed, report full pressure so the tip binding fires on the very first pressed report\n" +
-            "regardless of the tip threshold setting.\n" +
+            "Off: while pressed, report full pressure so the tip binding fires on the very first pressed report.\n" +
+            "Keep the pen tip threshold at 0% either way (newer OpenTabletDriver versions apply it before filters).\n" +
             "On: pass the real pressure through (minimum 1). Set the pen tip threshold to 0% in the bindings\n" +
             "tab, otherwise presses are delayed until pressure exceeds it.")]
         public bool PreservePressure { set; get; }
