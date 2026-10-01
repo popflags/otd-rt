@@ -44,6 +44,37 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
+        public void PhantomMaxPressureSampleAfterALiftDoesNotPress()
+        {
+            // From the recordings: one sample at exactly 8191, ~40 ms after a lift, then 0.
+            var engine = Engine();
+            var events = Signals.Run(engine, Signals.Samples(9, 0, 0, 0, 0, 8191, 0, 0));
+
+            Assert.Empty(events);
+            Assert.False(engine.Pressed);
+        }
+
+        [Fact]
+        public void ContactStartingAtMaxPressesOnceItMovesOrLasts()
+        {
+            var moved = Engine();
+            var events = Signals.Run(moved, Signals.Samples(9, 0, 8191, 7900));
+            Assert.Equal((18, TriggerEvent.Contact), events.Single());
+
+            var held = Engine();
+            events = Signals.Run(held, Signals.Samples(9, 0, 8191, 8191, 8191));
+            Assert.Equal((9 + 20, TriggerEvent.Contact), events.Single());
+        }
+
+        [Fact]
+        public void ContactBelowPhantomPressureIsNotDelayed()
+        {
+            var engine = Engine();
+            engine.Update(0, 1);
+            Assert.Equal(TriggerEvent.Contact, engine.Update(8190, 1));
+        }
+
+        [Fact]
         public void LiftAlwaysReleases()
         {
             var engine = Engine(new TriggerSettings { ReleaseDistance = 100000, FastFallSpeed = 0, FastFallPercent = 0 });
@@ -167,7 +198,7 @@ namespace RapidTrigger.Tests
         public void RealHoldDipsSampledEvery9MsDoNotRelease(double[] samples)
         {
             var engine = Engine();
-            Signals.Run(engine, Signals.Samples(9, samples[0]));
+            Signals.Run(engine, Signals.Samples(9, 4000, samples[0], samples[0], samples[0]));
 
             var events = Signals.Run(engine, Signals.Samples(9, samples));
 

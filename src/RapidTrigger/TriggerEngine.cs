@@ -30,6 +30,16 @@ namespace RapidTrigger
         /// <summary>Pressure that presses the tip when coming from a lifted pen. Lowest = fastest first press.</summary>
         public double ContactThreshold { get; set; } = 4;
 
+        /// <summary>
+        /// A contact whose first report is at or above this pressure waits PhantomConfirmTime before pressing, and is
+        /// dropped if the pen lifts in the meantime. The PTK-670 sometimes reports a single sample at exactly max
+        /// pressure (8191) ~40 ms after a lift; no real contact in the recordings started above 7000. 0 = off.
+        /// </summary>
+        public double PhantomContactPressure { get; set; } = 8191;
+
+        /// <summary>How long a contact that starts at PhantomContactPressure must last before it presses, in ms.</summary>
+        public double PhantomConfirmTime { get; set; } = 20;
+
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
 
@@ -114,6 +124,9 @@ namespace RapidTrigger
         private double _sinceChangeMs;
         private bool _fresh = true;
 
+        // Time a suspected phantom contact has lasted; negative = none pending.
+        private double _phantomMs = -1;
+
         public TriggerEngine(TriggerSettings settings)
         {
             _settings = settings.Clone();
@@ -145,6 +158,7 @@ namespace RapidTrigger
             _previousPressure = 0;
             _sinceChangeMs = 0;
             _fresh = true;
+            _phantomMs = -1;
             CurrentReleaseDistance = 0;
             HoldReference = 0;
             FallExcess = 0;
@@ -186,8 +200,23 @@ namespace RapidTrigger
 
             if (_fresh)
             {
-                if (p >= s.ContactThreshold && p > s.LiftThreshold)
-                    return Press(p, TriggerEvent.Contact);
+                if (!(p >= s.ContactThreshold && p > s.LiftThreshold))
+                {
+                    _phantomMs = -1;
+                    return TriggerEvent.None;
+                }
+
+                // A contact that starts at max pressure is held back until it has lasted long enough to be real.
+                // It presses at once if pressure moves below the phantom level, and is dropped if the pen lifts.
+                if (s.PhantomContactPressure > 0 && p >= s.PhantomContactPressure)
+                {
+                    _phantomMs = _phantomMs < 0 ? 0 : _phantomMs + elapsedMs;
+                    if (_phantomMs < s.PhantomConfirmTime)
+                        return TriggerEvent.None;
+                }
+
+                _phantomMs = -1;
+                return Press(p, TriggerEvent.Contact);
             }
             else if (p - _anchor >= s.ActivationDistance + s.ActivationPercent * 0.01 * _anchor)
             {

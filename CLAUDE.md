@@ -101,7 +101,9 @@ Per report: `Update(rawPressure, elapsedMs)`.
 
 - **Released:** the trough tracks the minimum (optional `PressDriftTimeConstant` lets it creep up).
   - *Fresh contact* (pressure hit ≤ `LiftThreshold` since the last release): press on the first report
-    ≥ `ContactThreshold`.
+    ≥ `ContactThreshold`. Exception (2.3.1): a contact whose first report is ≥ `PhantomContactPressure`
+    (8191) waits `PhantomConfirmTime` (20 ms), presses as soon as pressure moves below that level, and is
+    dropped if the pen lifts first.
   - Otherwise *Rearm*: press when pressure ≥ trough + `ActivationDistance`.
 - **Pressed:** whichever detector fires first releases.
   1. **Lift:** pressure ≤ `LiftThreshold`.
@@ -193,8 +195,16 @@ latency = *lead before lift* (ms from release to pressure 0; larger = earlier).
 - The slow path almost never fires on this tablet: with 9 ms samples and τ 10 ms the reference catches up
   within a sample. It is a safety net only.
 - Two one-sample strokes: 8191 for one sample 37 ms after a lift (t ≈ 59.55 s, looks like a firmware/sensor
-  glitch) and 431 for one sample (t ≈ 80.26 s). Each becomes a 9 ms click. Filtering them would delay every
-  press by a sample, so it is not done.
+  glitch) and 431 for one sample (t ≈ 80.26 s). Each becomes a 9 ms click. The 8191 kind is filtered since
+  2.3.1 (see below); the 431 one is indistinguishable from a light graze and still clicks.
+- **Second recording, other nib** (`recordings/play-ptk670-newtip-20261001.csv`, 231 s, 2.3.0 defaults,
+  S4 League melee, not osu!): 231 strokes, 175 taps, 55 holds. Same 9 ms sampling. 8 phantom one-sample 8191
+  strokes 11–47 ms after a lift (3.5% of strokes). No real stroke in either log starts ≥ 7000, so 2.3.1 holds
+  back contacts that start at 8191 (cost on real contacts: none observed). 12 re-presses inside strokes
+  (landing wobble, rebounds during releases, hold dips); the owner did not notice them in game and is fine
+  with them. Speed vs the old nib, same settings: tap release detected 21.0 vs 21.8 ms after the descent starts
+  (same p50 18 / p90 36: a tie within one sample); holds reach 8191 in 54% vs 28% (release start hidden while
+  saturated). Owner went back to the old nib.
 
 **Old 300 Hz log** (`logs/pressure_log_detailed.csv`, see below). Numbers from `rt replay` (before the
 per-sample change, which does not affect real 1 kHz or 300 Hz data where every report is a new value):

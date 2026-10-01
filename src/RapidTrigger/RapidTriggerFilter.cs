@@ -70,6 +70,8 @@ namespace RapidTrigger
             var settings = new TriggerSettings
             {
                 ContactThreshold = ContactThreshold,
+                PhantomContactPressure = PhantomContactPressure,
+                PhantomConfirmTime = PhantomConfirmTime,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
                 ActivationPercent = ActivationPercent,
@@ -114,6 +116,15 @@ namespace RapidTrigger
             "Pressure that presses the tip when the pen comes down from the air (first report at or above it).\n" +
             "Lower = earlier first press. Must stay above any pressure the pen reports while hovering.")]
         public double ContactThreshold { set; get; } = 4;
+
+        [Property("Phantom Contact Pressure"), DefaultPropertyValue(8191.0), Unit("raw"), ToolTip(
+            "A contact whose first report is at or above this pressure must last Phantom Confirm Time before it presses.\n" +
+            "Filters the single max-pressure samples the PTK-670 sometimes reports just after a lift. 0 = off.")]
+        public double PhantomContactPressure { set; get; } = 8191;
+
+        [Property("Phantom Confirm Time"), DefaultPropertyValue(20.0), Unit("ms"), ToolTip(
+            "How long a contact that starts at Phantom Contact Pressure must last before it presses.")]
+        public double PhantomConfirmTime { set; get; } = 20;
 
         [Property("Lift Threshold"), DefaultPropertyValue(2.0), Unit("raw"), ToolTip(
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]

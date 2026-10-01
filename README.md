@@ -12,7 +12,10 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
 
 **Press**
 - *Contact*: from a lifted pen, the first report at or above **Contact Threshold** presses. Nothing
-  is predicted or filtered, so the first press is the first report that shows contact.
+  is predicted or filtered, so the first press is the first report that shows contact. The one
+  exception: a contact that *starts* at max pressure (**Phantom Contact Pressure**) must last
+  **Phantom Confirm Time** first. The PTK-670 sometimes reports a single 8191 sample ~40 ms after a
+  lift; no real contact in the recordings started above 7000.
 - *Re-press without lifting*: pressure rising **Activation Distance** + **Activation Percent** of
   its lowest point since the last release above that lowest point. The percentage keeps wobble on
   heavy releases from double-clicking while light re-presses stay quick.
@@ -118,6 +121,7 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 | Setting | Default | |
 |---|---|---|
 | Contact Threshold | 4 | First press from the air. Lower = earlier. |
+| Phantom Contact Pressure / Phantom Confirm Time | 8191 / 20 ms | A contact that starts at or above this pressure must last this long to press (filters one-sample max-pressure glitches after a lift). 0 = off. |
 | Lift Threshold | 2 | Always released at or below this. |
 | Activation Distance | 20 | Re-press rise above the trough (fixed part). Keep the total ≥ 6× noise sigma. |
 | Activation Percent | 0.5 % | Part of the re-press rise that grows with the trough pressure (27 at 1500, 55 at 7000). |
