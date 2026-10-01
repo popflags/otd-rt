@@ -113,7 +113,8 @@ Per report: `Update(rawPressure, elapsedMs)`.
      `MaxReleaseDistance`, × hold multiplier). The hold reference jumps to new peaks and drifts toward the
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
-- Defaults (2.2.0): Contact 4, Lift 2, Activation 40, FastFallSpeed 0.5 raw/ms, FastFallPercent 0.25 %/ms,
+- **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
+- Defaults (2.3.0): Contact 4, Lift 2, Activation 20 + 0.5 %, FastFallSpeed 0.5 raw/ms, FastFallPercent 0.25 %/ms,
   FastReleaseDistance 10,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
@@ -150,6 +151,27 @@ latency = *lead before lift* (ms from release to pressure 0; larger = earlier).
   slower than ~70–100 ms at 4000, and ≤ 600 at 150 ms; at 1500 everything ≥ 300 deep. Cost: the made-up
   harsh synthetic drags (30% dips at 5000, ~20 raw/ms) cut out, and true 1 kHz sampling needs the old fixed
   allowance (20 raw/ms, 0 %, FRD 40). Low-pressure drags (allowance ~4 raw/ms at 1500) are untested.
+- **2.3.0 optimization** (owner: "optimize as much as possible"). Scored per config: unintended cut-outs on the
+  play log (68 excluded and required to re-press), the four real dips scaled 1.35× (`margin`, must hold),
+  synthetic no-lift re-presses caught (of 1064) and their delay trough→re-press, tap/hold lead.
+  - Release side (FastFallSpeed 0–2 × FastFallPercent 0.15–0.3 × FRD 3–20): 2.2.0 is within ~3% of the best
+    safe point (0.5/0.25/3: 934 re-presses, +0.6 ms taps). FRD 3 and FastFallSpeed 0 cut out on gentle
+    synthetic drags at 500–1000 with ±10–15 noise per sample (`light_*`: 10% dips, 1.5% tremor); 0.5/10
+    is the most robust of those; FastFallSpeed 1.5 removes all light cut-outs but loses 4% of re-presses.
+    Kept 0.5 / 0.25 / 10.
+  - Slow path (Drift 10–200 × Release 400–900): Drift 200 / 600 gives hold ends +8 ms and passes the real-dip
+    margin, but the old 300 Hz log's slow hold dips (2000–3100 over 500–800 ms, ~4–6 raw/ms) would lag the
+    reference by 800–1200 and release. Kept 10 / 600.
+  - Re-press side: the play log has a +39 bump after the release at t ≈ 89.3 s (6976 → 7015 on the way to
+    lifting); ActivationDistance ≤ 39 double-clicks there, so the old fixed 40 had a 1.03 margin. Swept
+    fixed 0–20 + 0.3–1.0 % of the trough: 20 + 0.5 % has 1.41 margin there, 27.5 at 1500, and re-presses
+    0.6 ms sooner on average (11.6 vs 12.2 ms; first-sample bound is ~9). Lower floors gain up to 1.7 ms but
+    sit at or below likely resting-pen noise at light pressure (σ unknown; ±15 per 9 ms sample would
+    re-press at < 30).
+  - `rt calibrate` on the play log (with 68 blanked) recommends FastFallPercent 0.2 / FRD 3.9 / Release 234 /
+    Activation 77: its margin scales distances, not dips, it ignores light-pressure noise, and σ = 12.7
+    includes hand motion between samples, so it was not adopted. Its fast-distance noise floor now uses the
+    allowance at the 10th-percentile pressure (`4σ − (FastFallSpeed + FastFallPercent%·p10)·interval`).
 
 - Hold dips that cut out before: single-sample falls of 84–120 (≤ 13 raw/ms) at 7000–8191, 2-sample ≤ 225,
   total ≤ 490. With 20 raw/ms × 9 ms = 180 allowance + 20, one sample must fall ≥ 200 (67% margin).
@@ -217,8 +239,8 @@ Findings that shaped it:
 - *Noise σ*: 1.4826·median|2nd difference|/√6 over samples > 50, repeated values skipped. On sample-and-hold
   logs this includes hand motion between samples (12.7 on the PTK-670 play log, so it recommends
   Activation ≥ 77; not adopted since Rearm is untested there). Calibrate recommends Activation ≥ 6σ,
-  slow-path distance ≥ 10σ and fast distance ≥ 4σ − FastFallSpeed·sample interval (the percent part is ignored,
-  conservative at low pressure).
+  slow-path distance ≥ 10σ and fast distance ≥ 4σ − (FastFallSpeed + FastFallPercent%·p10)·sample interval,
+  p10 = 10th percentile of pressures > 50.
 - The calibrator scales ReleaseDistance, ReleaseRatio, MaxReleaseDistance and FastReleaseDistance together
   (bisection to the smallest scale with zero cut-outs) for each DriftTimeConstant × FastFallPercent pair
   (`--fast-percents`, 0 = fast detector off; FastFallSpeed comes from `--set`),

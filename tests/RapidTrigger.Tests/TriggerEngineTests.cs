@@ -233,8 +233,29 @@ namespace RapidTrigger.Tests
             engine.Update(3000, 1);
             Assert.True(IsRelease(engine.Update(2700, 1)));
             engine.Update(2500, 1);
-            Assert.Equal(TriggerEvent.None, engine.Update(2539, 1));
-            Assert.Equal(TriggerEvent.Rearm, engine.Update(2540, 1));
+            // 20 + 0.5% of 2500 = 32.5.
+            Assert.Equal(TriggerEvent.None, engine.Update(2532, 1));
+            Assert.Equal(TriggerEvent.Rearm, engine.Update(2533, 1));
+        }
+
+        [Fact]
+        public void WobbleWhileReleasingFromAHeavyHoldDoesNotRePress()
+        {
+            // The end of a 750 ms hold on the recording (t = 89.3 s): 6976 -> 7015 (+39) on the way down after the
+            // release. A fixed Activation Distance of 39 or less turned that into a double click.
+            var samples = new double[] { 7795, 7752, 7604, 7369, 7091, 6976, 6979, 7015, 7001, 6940,
+                6552, 5901, 5257, 4605, 3951, 3456, 2983, 2483, 2000, 1814, 1351, 0 };
+
+            var engine = Engine();
+            Signals.Run(engine, Signals.Samples(9, 7796));
+            var events = Signals.Run(engine, Signals.Samples(9, samples));
+
+            Assert.Equal(TriggerEvent.FastRelease, events[0].Event);
+            Assert.DoesNotContain(events, e => e.Event == TriggerEvent.Rearm);
+
+            var fixedDistance = Engine(new TriggerSettings { ActivationDistance = 39, ActivationPercent = 0 });
+            Signals.Run(fixedDistance, Signals.Samples(9, 7796));
+            Assert.Contains(Signals.Run(fixedDistance, Signals.Samples(9, samples)), e => e.Event == TriggerEvent.Rearm);
         }
 
         [Fact]

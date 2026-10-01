@@ -52,7 +52,7 @@ static void PrintUsage()
             across all drag logs, adds the margin, and reports release speed. Prints the
             recommended plugin settings.
 
-        Setting names: ContactThreshold, LiftThreshold, ActivationDistance, ReleaseDistance,
+        Setting names: ContactThreshold, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
         ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, PressDriftTimeConstant,
         HoldTime, HoldReleaseMultiplier.
 
@@ -124,6 +124,8 @@ static int Calibrate(Options o)
 
     double noise = drags.Concat(taps).Max(Analysis.NoiseSigma);
     double sampleInterval = drags.Concat(taps).Select(Analysis.MedianSampleInterval).Where(v => !double.IsNaN(v)).DefaultIfEmpty(1).Min();
+    // Light end of the pressures in use: where the pressure-proportional allowance is smallest.
+    double lightPressure = Analysis.Percentile(drags.Concat(taps).SelectMany(l => l.Pressure).Where(v => v > 50).Select(v => (double)v), 0.1);
     double minReleaseDistance = Math.Max(10 * noise, baseSettings.ActivationDistance);
     double activation = Math.Max(baseSettings.ActivationDistance, RecommendedActivation(noise));
 
@@ -166,7 +168,8 @@ static int Calibrate(Options o)
         // The fast detector integrates noise too: keep it clear of what noise alone can add up to. Each pressure
         // sample is first charged the drag allowance for the time since the previous one, which absorbs the noise
         // when samples are far apart (PTK-670: ~9 ms).
-        candidate.FastReleaseDistance = Math.Max(candidate.FastReleaseDistance, 4 * noise - fastFall * sampleInterval);
+        double allowance = fastFall + tauSettings.FastFallPercent * 0.01 * lightPressure;
+        candidate.FastReleaseDistance = Math.Max(candidate.FastReleaseDistance, 4 * noise - allowance * sampleInterval);
 
         var dragEnd = drags.SelectMany(d => Analysis.ReleaseTimings(Analysis.Replay(d, candidate))).Select(t => t.MsSinceFallStart).ToList();
         var tapTimes = new List<double>();

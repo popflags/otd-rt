@@ -72,6 +72,7 @@ namespace RapidTrigger
                 ContactThreshold = ContactThreshold,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
+                ActivationPercent = ActivationPercent,
                 ReleaseDistance = ReleaseDistance,
                 ReleaseRatio = ReleaseRatio,
                 MaxReleaseDistance = MaxReleaseDistance,
@@ -118,10 +119,15 @@ namespace RapidTrigger
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]
         public double LiftThreshold { set; get; } = 2;
 
-        [Property("Activation Distance"), DefaultPropertyValue(40.0), Unit("raw"), ToolTip(
-            "Rapid re-press: how far pressure must rise above its lowest point since the last release.\n" +
-            "Keep it above the pressure noise (rt replay prints a noise estimate).")]
-        public double ActivationDistance { set; get; } = 40;
+        [Property("Activation Distance"), DefaultPropertyValue(20.0), Unit("raw"), ToolTip(
+            "Rapid re-press: how far pressure must rise above its lowest point since the last release (fixed part).\n" +
+            "Keep the total above the pressure noise. Lower = earlier re-presses, more risk of double clicks.")]
+        public double ActivationDistance { set; get; } = 20;
+
+        [Property("Activation Percent"), DefaultPropertyValue(0.5), Unit("%"), ToolTip(
+            "Rapid re-press: part of the required rise that grows with pressure, in % of the lowest point.\n" +
+            "Keeps wobble on heavy releases from re-pressing while light re-presses stay quick.")]
+        public double ActivationPercent { set; get; } = 0.5;
 
         [Property("Fast Fall Speed"), DefaultPropertyValue(0.5), Unit("raw/ms"), ToolTip(
             "Fast release detector: fixed part of the drag allowance. Falls slower than\n" +

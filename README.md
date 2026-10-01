@@ -13,8 +13,9 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
 **Press**
 - *Contact*: from a lifted pen, the first report at or above **Contact Threshold** presses. Nothing
   is predicted or filtered, so the first press is the first report that shows contact.
-- *Re-press without lifting*: pressure rising **Activation Distance** above its lowest point since
-  the last release.
+- *Re-press without lifting*: pressure rising **Activation Distance** + **Activation Percent** of
+  its lowest point since the last release above that lowest point. The percentage keeps wobble on
+  heavy releases from double-clicking while light re-presses stay quick.
 
 **Release**: two detectors run side by side, and whichever fires first releases.
 - *Fast-fall detector (CUSUM)*: each new pressure sample adds its fall minus what a drag could fall
@@ -81,7 +82,8 @@ Defaults are a starting point. They come from a 108 s gameplay recording on the 
 ~600 ms holds, `recordings/`), an old 300 Hz log and synthetic drags and taps; your hand, nib and
 firmware decide the real numbers. The defaults lean towards speed: fast releases and shallow
 re-presses without lifting, at the cost of harsh drags (fast 30% dips) possibly cutting out. For
-steadier drags raise Fast Fall Percent (0.3–0.4). If `rt replay` shows pressure changing every report
+steadier drags raise Fast Fall Percent (0.3–0.4); if light-pressure drags cut out, raise Fast Fall
+Speed to 1.5. If `rt replay` shows pressure changing every report
 (true 1000 Hz pressure sampling), sensor noise adds up in the fast detector: use Fast Fall Speed 20,
 Fast Fall Percent 0 and Fast Release Distance 40.
 
@@ -117,7 +119,8 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 |---|---|---|
 | Contact Threshold | 4 | First press from the air. Lower = earlier. |
 | Lift Threshold | 2 | Always released at or below this. |
-| Activation Distance | 40 | Re-press rise above the trough. Keep ≥ 6× noise sigma (`rt replay` prints it). |
+| Activation Distance | 20 | Re-press rise above the trough (fixed part). Keep the total ≥ 6× noise sigma. |
+| Activation Percent | 0.5 % | Part of the re-press rise that grows with the trough pressure (27 at 1500, 55 at 7000). |
 | Fast Fall Speed | 0.5 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
 | Fast Fall Percent | 0.25 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |

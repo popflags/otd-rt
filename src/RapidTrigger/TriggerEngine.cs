@@ -33,8 +33,17 @@ namespace RapidTrigger
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
 
-        /// <summary>Rise above the lowest pressure since the last release that presses again without lifting.</summary>
-        public double ActivationDistance { get; set; } = 40;
+        /// <summary>
+        /// Rise above the lowest pressure since the last release that presses again without lifting
+        /// (fixed part; ActivationPercent adds a part that grows with that lowest pressure).
+        /// </summary>
+        public double ActivationDistance { get; set; } = 20;
+
+        /// <summary>
+        /// Part of the re-press rise that grows with pressure, in % of the lowest pressure since the release. Wobble
+        /// grows with force: on the PTK-670 recording a release from a 7000 hold bumped back up by 39 before lifting.
+        /// </summary>
+        public double ActivationPercent { get; set; } = 0.5;
 
         /// <summary>
         /// Fast-fall detector, drag allowance: falls slower than FastFallSpeed + FastFallPercent% of the pressure
@@ -180,7 +189,7 @@ namespace RapidTrigger
                 if (p >= s.ContactThreshold && p > s.LiftThreshold)
                     return Press(p, TriggerEvent.Contact);
             }
-            else if (p - _anchor >= s.ActivationDistance)
+            else if (p - _anchor >= s.ActivationDistance + s.ActivationPercent * 0.01 * _anchor)
             {
                 return Press(p, TriggerEvent.Rearm);
             }
