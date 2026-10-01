@@ -38,8 +38,8 @@ namespace RapidTrigger
 
         /// <summary>
         /// Fast-fall detector: falls faster than this (raw units per ms) are faster than anything a drag does.
-        /// Only the part of each report's fall above this speed counts towards FastReleaseDistance.
-        /// 0 = detector off.
+        /// Only the part of each pressure sample's fall above this speed (times the time since the previous sample)
+        /// counts towards FastReleaseDistance. 0 = detector off.
         /// </summary>
         public double FastFallSpeed { get; set; } = 20;
 
@@ -47,7 +47,7 @@ namespace RapidTrigger
         /// Fast-fall detector: release once the fall in excess of FastFallSpeed adds up to this (a one-sided CUSUM).
         /// Smaller = earlier tap releases; must stay above what sensor noise can add up to.
         /// </summary>
-        public double FastReleaseDistance { get; set; } = 40;
+        public double FastReleaseDistance { get; set; } = 20;
 
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
@@ -94,6 +94,7 @@ namespace RapidTrigger
         // Pressed: hold reference (drifting peak). Released: trough (lowest pressure since release).
         private double _anchor;
         private double _previousPressure;
+        private double _sinceChangeMs;
         private bool _fresh = true;
 
         public TriggerEngine(TriggerSettings settings)
@@ -125,6 +126,7 @@ namespace RapidTrigger
             Pressed = false;
             _anchor = 0;
             _previousPressure = 0;
+            _sinceChangeMs = 0;
             _fresh = true;
             CurrentReleaseDistance = 0;
             HoldReference = 0;
@@ -141,7 +143,15 @@ namespace RapidTrigger
             double previous = _previousPressure;
             _previousPressure = p;
 
-            return Pressed ? UpdatePressed(p, previous, elapsedMs) : UpdateReleased(p, previous, elapsedMs);
+            // Some tablets sample pressure slower than they send reports and repeat the last value in between
+            // (the PTK-670 on 1000 Hz firmware: a new pressure sample every ~9 reports). A change then covers all the
+            // time since the previous change, not just the last report interval.
+            _sinceChangeMs += elapsedMs;
+            double sampleMs = _sinceChangeMs;
+            if (p != previous)
+                _sinceChangeMs = 0;
+
+            return Pressed ? UpdatePressed(p, previous, elapsedMs, sampleMs) : UpdateReleased(p, previous, elapsedMs);
         }
 
         private TriggerEvent UpdateReleased(double p, double previous, double elapsedMs)
@@ -170,18 +180,19 @@ namespace RapidTrigger
             return TriggerEvent.None;
         }
 
-        private TriggerEvent UpdatePressed(double p, double previous, double elapsedMs)
+        private TriggerEvent UpdatePressed(double p, double previous, double elapsedMs, double sampleMs)
         {
             var s = _settings;
             HeldTime += elapsedMs;
             double multiplier = HoldMultiplier(HeldTime);
 
-            // Fast path: one-sided CUSUM. Each report adds its fall minus what a drag could fall in that time;
-            // rises and slow falls drain it back to zero.
+            // Fast path: one-sided CUSUM. Each new pressure sample adds its fall minus what a drag could fall since the
+            // previous sample; rises and slow falls drain it back to zero. Repeated values are not new samples.
             bool fastFallBuilding = false;
             if (s.FastFallSpeed > 0)
             {
-                FallExcess = Math.Max(0, FallExcess + (previous - p) - s.FastFallSpeed * elapsedMs);
+                if (p != previous)
+                    FallExcess = Math.Max(0, FallExcess + (previous - p) - s.FastFallSpeed * sampleMs);
                 fastFallBuilding = FallExcess > 0;
             }
 

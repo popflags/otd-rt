@@ -99,6 +99,44 @@ namespace RtTool
         }
 
         /// <summary>
+        /// For recordings where every stroke ends with the pen lifted: how long before pressure reached the lift
+        /// threshold each release came (larger = earlier). Releases followed by a re-press before the lift, or with
+        /// no lift within <paramref name="liftWindowMs"/>, are skipped (those are cut-outs, not stroke ends).
+        /// Lift releases count as 0.
+        /// </summary>
+        public static List<double> LeadBeforeLift(ReplayResult result, double liftWindowMs)
+        {
+            var log = result.Log;
+            var leads = new List<double>();
+            var events = result.Events;
+            double lift = result.Settings.LiftThreshold;
+
+            for (int k = 0; k < events.Count; k++)
+            {
+                var e = events[k];
+                if (e.Event is TriggerEvent.Lift)
+                {
+                    leads.Add(0);
+                    continue;
+                }
+                if (e.Event is not (TriggerEvent.Release or TriggerEvent.FastRelease))
+                    continue;
+
+                int nextPress = k + 1 < events.Count ? events[k + 1].Index : int.MaxValue;
+                for (int i = e.Index + 1; i < log.Count && i < nextPress && log.Time[i] - e.Time <= liftWindowMs; i++)
+                {
+                    if (log.Pressure[i] <= lift)
+                    {
+                        leads.Add(log.Time[i] - e.Time);
+                        break;
+                    }
+                }
+            }
+
+            return leads;
+        }
+
+        /// <summary>
         /// For recordings where the pen was held down the whole time (drags): a release counts as a cut-out
         /// if the tip presses again before pressure reaches the lift threshold, or if pressure does not reach
         /// the lift threshold within <paramref name="liftWindowMs"/> (the drag was dropped while still held).
@@ -217,9 +255,15 @@ namespace RtTool
         /// </summary>
         public static double NoiseSigma(PressureLog log)
         {
-            var p = log.Pressure;
+            // Repeated values are the tablet holding its last pressure sample between reports, not new samples.
+            var p = new List<uint>(log.Count);
+            for (int i = 0; i < log.Count; i++)
+            {
+                if (i == 0 || log.Pressure[i] != log.Pressure[i - 1])
+                    p.Add(log.Pressure[i]);
+            }
             var second = new List<double>();
-            for (int i = 1; i < p.Length - 1; i++)
+            for (int i = 1; i < p.Count - 1; i++)
             {
                 if (p[i - 1] > 50 && p[i] > 50 && p[i + 1] > 50)
                     second.Add(Math.Abs((double)p[i + 1] - 2.0 * p[i] + p[i - 1]));
@@ -230,6 +274,23 @@ namespace RtTool
             second.Sort();
             // MAD -> sigma for a normal distribution, divided by sqrt(6) for the second difference of white noise.
             return 1.4826 * PercentileSorted(second, 0.5) / Math.Sqrt(6);
+        }
+
+        /// <summary>Median time between pressure changes while the pen is down: the tablet's real pressure sample interval.</summary>
+        public static double MedianSampleInterval(PressureLog log)
+        {
+            var intervals = new List<double>();
+            int last = -1;
+            for (int i = 1; i < log.Count; i++)
+            {
+                if (log.Pressure[i] == log.Pressure[i - 1] || log.Pressure[i - 1] == 0 || log.Pressure[i] == 0)
+                    continue;
+                if (last >= 0)
+                    intervals.Add(log.Time[i] - log.Time[last]);
+                last = i;
+            }
+            intervals.Sort();
+            return PercentileSorted(intervals, 0.5);
         }
 
         public static double MedianInterval(PressureLog log)

@@ -1,7 +1,7 @@
 # Rapid Trigger for OpenTabletDriver
 
 Rapid trigger for the pen tip on OpenTabletDriver 0.6.x (built against 0.6.7), tuned for high report rate tablets
-(developed on a Wacom PTK-670 running at 1000 Hz). Taps press and release as early as the pressure
+(developed on a Wacom PTK-670 sending 1000 reports/s, with a new pressure sample every ~9 ms). Taps press and release as early as the pressure
 signal allows, while drags stay held through normal pressure wobble.
 
 > Rapid trigger can trip anti-cheats or break game rules. Use at your own risk.
@@ -17,8 +17,9 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
   the last release.
 
 **Release**: two detectors run side by side, and whichever fires first releases.
-- *Fast-fall detector (CUSUM)*: each report adds its pressure fall minus what a drag could fall in
-  that time (**Fast Fall Speed** × elapsed ms). Rises and slow falls drain it back to zero. It
+- *Fast-fall detector (CUSUM)*: each new pressure sample adds its fall minus what a drag could fall
+  since the previous sample (**Fast Fall Speed** × elapsed ms). Reports that repeat the last pressure
+  value are not new samples: the PTK-670 on 1000 Hz firmware repeats each value for ~9 reports. Rises and slow falls drain it back to zero. It
   releases once the excess reaches **Fast Release Distance**. Drag dips are slower than Fast Fall
   Speed, so they never add up. A real release starts counting the moment it gets faster than any
   drag, with no smoothing lag. This is Page's CUSUM change detector, the standard quickest-detection
@@ -74,8 +75,10 @@ Restart OpenTabletDriver. Then, in the Filters tab:
 
 ## Tuning: record, then calibrate
 
-Defaults are a starting point. They come from replaying an old 300 Hz log and synthetic 1000 Hz
-drags and taps; your hand, nib and firmware decide the real numbers.
+Defaults are a starting point. They come from a 108 s gameplay recording on the PTK-670 (taps and
+~600 ms holds, `recordings/`), an old 300 Hz log and synthetic drags and taps; your hand, nib and
+firmware decide the real numbers. If `rt replay` shows pressure changing every report (true 1000 Hz
+pressure sampling), sensor noise adds up in the fast detector: raise Fast Release Distance to ≥ 40.
 
 1. Enable **Enable Diagnostics**. Each time the filter is applied, it writes
    `~/rapid-trigger-logs/rt-<time>.csv` (Windows: `C:\Users\<you>\rapid-trigger-logs\`).
@@ -98,9 +101,10 @@ drags and taps; your hand, nib and firmware decide the real numbers.
 5. Enter the settings and turn diagnostics off.
 
 `rt replay <log> [--set Name=Value ...] [--events]` runs any settings over a log. It prints
-presses, releases (fast / distance / lift), release timing from the start of each descent,
-cut-outs (meaningful for drag logs), missed taps (meaningful for tap logs) and a sensor-noise
-estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
+the pressure sample interval, presses, releases (fast / distance / lift), release timing from the
+start of each descent, release lead before the lift (larger = earlier; for strokes that end in a lift),
+cut-outs (meaningful for drag logs, and for any log where every stroke is one press), missed taps
+(meaningful for tap logs) and a sensor-noise estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
 
 ## Settings
 
@@ -110,7 +114,7 @@ estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
 | Lift Threshold | 2 | Always released at or below this. |
 | Activation Distance | 40 | Re-press rise above the trough. Keep ≥ 6× noise sigma (`rt replay` prints it). |
 | Fast Fall Speed | 20 raw/ms | Fastest fall a drag produces. Higher = steadier drags, later taps. 0 = fast detector off. |
-| Fast Release Distance | 40 | Excess fall that releases. Lower = earlier taps. |
+| Fast Release Distance | 20 | Excess fall that releases. Lower = earlier taps. ≥ 40 if pressure is really sampled every ms. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |

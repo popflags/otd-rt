@@ -8,7 +8,8 @@ useful from them is summarized below.
 ## Owner and goal
 
 - Owner (GitHub `popflags`) plays rhythm/aim games with a **Wacom PTK-670 (Intuos Pro M, 2025)** running
-  **custom firmware at 1000 Hz**, on OpenTabletDriver (OTD) **0.6.7** (latest release; plugin targets it). Develops on Linux (CachyOS) locally
+  **custom firmware at 1000 Hz** (1000 reports/s, but **pressure is sampled only every ~9 ms**: each value is
+  repeated for ~9 reports; measured in `recordings/play-ptk670-20261001.csv`), on OpenTabletDriver (OTD) **0.6.7** (latest release; plugin targets it). Develops on Linux (CachyOS) locally
   and on Windows through Claude Code in the cloud (no IDE on Windows).
 - Requirements, in the owner's words: initial press as fast as possible, release as fast as possible,
   taps as fast as possible, "compromise as little as possible". **Drags must never cut out** (tip held
@@ -103,20 +104,59 @@ Per report: `Update(rawPressure, elapsedMs)`.
   - Otherwise *Rearm*: press when pressure ≥ trough + `ActivationDistance`.
 - **Pressed:** whichever detector fires first releases.
   1. **Lift:** pressure ≤ `LiftThreshold`.
-  2. **FastRelease (CUSUM):** `FallExcess = max(0, FallExcess + (prev − p) − FastFallSpeed·dt)`; release
-     when ≥ `FastReleaseDistance` (× hold multiplier). Only fall faster than the drag allowance accumulates.
-     There's no smoothing, so it reacts on the first fast report.
+  2. **FastRelease (CUSUM):** on each report whose pressure *differs* from the previous one,
+     `FallExcess = max(0, FallExcess + (prev − p) − FastFallSpeed·dt)`, with dt = time since the previous
+     change (repeated values are not new samples; before 2026-10-01 dt was the report interval, which on the
+     PTK-670 made the allowance 9× too small). Release when ≥ `FastReleaseDistance` (× hold multiplier).
+     Only fall faster than the drag allowance accumulates. No smoothing: it reacts on the first fast sample.
   3. **Release (slow path):** hold reference − p ≥ `ReleaseDistance` (or `ReleaseRatio`·ref, capped by
      `MaxReleaseDistance`, × hold multiplier). The hold reference jumps to new peaks and drifts toward the
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
-- Defaults: Contact 4, Lift 2, Activation 40, FastFallSpeed 20 raw/ms, FastReleaseDistance 40,
+- Defaults: Contact 4, Lift 2, Activation 40, FastFallSpeed 20 raw/ms, FastReleaseDistance 20,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
 ### Evidence behind the design and defaults
 
-The only real data so far is the old **~300 Hz** log (`logs/pressure_log_detailed.csv`, see below). No
-1000 Hz recordings exist yet, and getting them is the most valuable next step. Numbers from `rt replay`:
+**PTK-670 recording (2026-10-01), `recordings/play-ptk670-20261001.csv`:** 108 s of play recorded with the
+then-defaults (FastReleaseDistance 40, per-report CUSUM). 103 strokes, every one lifted at the end: ≈70 taps
+(10–210 ms) and ≈32 holds (320–810 ms, 6000–8191, likely sliders). No drags longer than 0.8 s, no
+re-pressing without lifting, so Rearm/ActivationDistance and long drags are untested on real 1000 Hz data.
+Every press is a Contact on the first sample (often already 2000–5000), so press latency = sample timing.
+Evaluated as "every stroke is one press": a release followed by a re-press before the lift is a cut-out;
+latency = *lead before lift* (ms from release to pressure 0; larger = earlier).
+
+| | as recorded (per-report CUSUM, FRD 40) | per-sample CUSUM, FRD 40 | **per-sample, FRD 20 (defaults)** | old 0112 |
+|---|---|---|---|---|
+| cut-outs (strokes) | 5 (36, 68, 79, 90, 94) | 1 (68) | 1 (68) | 9 |
+| tap lead before lift, mean | 34.7 ms | 28.2 ms | 29.2 ms | 25.6 ms |
+| hold lead before lift, mean | 100 ms | 59.5 ms | 60.9 ms | 120 ms |
+| synthetic drags held 9 ms (`synth_logs.py --sample-ms 9`): cut-outs | 69 | 0 | 0 | |
+| synthetic drags, true 1 kHz (`syn_drag`): cut-outs | 0 | 0 | 9 | 60 |
+
+- Hold dips that cut out before: single-sample falls of 84–120 (≤ 13 raw/ms) at 7000–8191, 2-sample ≤ 225,
+  total ≤ 490. With 20 raw/ms × 9 ms = 180 allowance + 20, one sample must fall ≥ 200 (67% margin).
+- Stroke 68 (t ≈ 67.3 s): 8191 → 6599 in 4 samples (up to 65 raw/ms), back up to 7428, lift 150 ms later.
+  As fast as a tap; no speed threshold separates it. Unknown whether intended (ask the owner).
+- The regression is real: hold ends release ~40 ms later and taps ~5 ms later than as recorded. The early
+  releases came from the same sensitivity (effectively ~2.2 raw/ms) that cut the hold dips: hold ends start
+  with the same 30–120 per-sample falls as those dips (e.g. stroke 44 vs 90, both falling from 8191).
+- Sensitivity frontier on this log (FRD/FastFallSpeed sweeps): FastFallSpeed 16 / FRD 15 gives taps 30.0,
+  holds 67.9, still only stroke 68, but cuts 11 of the 9 ms-held synthetic drags, so it was not adopted
+  without a real drag recording. 12 / 20 is the edge (stroke 79 cuts at 10 / 40 and 12 / 10).
+- Tried and dropped on this log: allowance proportional to pressure (`+ r·p`): ~+1 ms taps, +3 ms holds.
+  Allowance ramping from low (taps) to high (holds) over HoldTime: +2–3 ms taps but thin margin (tap stroke 3
+  cuts one step more sensitive) and it is a time-based tap/hold split like TimerwThreshold/HSK.
+  HoldReleaseMultiplier on distances: no gain (dips are a speed problem). Slow path with long drift
+  (τ 100–200 ms, 500–800): earlier hold ends but cuts most synthetic drags.
+- The slow path almost never fires on this tablet: with 9 ms samples and τ 10 ms the reference catches up
+  within a sample. It is a safety net only.
+- Two one-sample strokes: 8191 for one sample 37 ms after a lift (t ≈ 59.55 s, looks like a firmware/sensor
+  glitch) and 431 for one sample (t ≈ 80.26 s). Each becomes a 9 ms click. Filtering them would delay every
+  press by a sample, so it is not done.
+
+**Old 300 Hz log** (`logs/pressure_log_detailed.csv`, see below). Numbers from `rt replay` (before the
+per-sample change, which does not affect real 1 kHz or 300 Hz data where every report is a new value):
 
 | | old 0112 settings | defaults |
 |---|---|---|
@@ -140,18 +180,25 @@ Findings that shaped it:
 - **Unresolved conflict:** no setting gave both 0 missed real taps and 0 synthetic-drag cut-outs. The
   defaults favour drags. The 6 missed real taps are slow, shallow (~35–40%) releases that look like drag
   dips. The synthetic drags (30% dips over 400 ms + 3% tremor at 9 Hz + ±15 noise) were made up and may be
-  harsher than real drags. **Real 1000 Hz recordings decide this, via `rt calibrate`.**
+  harsher than real drags. **Real 1000 Hz recordings decide this, via `rt calibrate`.** The 2026-10-01
+  recording has holds (≤ 13 raw/ms dips) but no long drags; a `drag-*.csv` recording is still missing.
 
 ### Metrics in RtTool (know their limits)
 
 - *Release timing*: ms from the start of the descent (most recent prominent peak; last sample within
   max(3σ, 1%) of it) to the release, plus pressure shed. On slow falls, "start of descent" is fuzzy.
 - *Cut-outs* (drag logs): a Release/FastRelease followed by a re-press before pressure reaches the lift
-  threshold, or no lift within `--lift-window` (300 ms). Only meaningful when the log contains drags only.
+  threshold, or no lift within `--lift-window` (300 ms). Meaningful when every stroke is one press (drags,
+  or `play-*` logs where the pen lifts after each tap/hold).
+- *Lead before lift*: ms from each stroke-ending release to pressure ≤ lift threshold (larger = earlier).
+  Label-free latency metric for logs where strokes end in a lift. Quantized to the 9 ms sample interval.
+- *Pressure sample interval*: median time between pressure changes while pressed (9 ms on the PTK-670).
 - *Missed releases* (tap logs): zigzag swings of ≥ max(400, 35% of peak) whose peak was pressed but which
   never released before the trough. A heuristic: on drag logs it counts dips as "taps".
-- *Noise σ*: 1.4826·median|2nd difference|/√6 over samples > 50. Calibrate recommends Activation ≥ 6σ,
-  slow-path distance ≥ 10σ and fast distance ≥ 4σ.
+- *Noise σ*: 1.4826·median|2nd difference|/√6 over samples > 50, repeated values skipped. On sample-and-hold
+  logs this includes hand motion between samples (12.7 on the PTK-670 play log, so it recommends
+  Activation ≥ 77; not adopted since Rearm is untested there). Calibrate recommends Activation ≥ 6σ,
+  slow-path distance ≥ 10σ and fast distance ≥ 4σ − FastFallSpeed·sample interval.
 - The calibrator scales ReleaseDistance, ReleaseRatio, MaxReleaseDistance and FastReleaseDistance together
   (bisection to the smallest scale with zero cut-outs) for each DriftTimeConstant × FastFallSpeed pair,
   adds the margin, and picks the fastest p90 tap release with no missed taps.
@@ -172,7 +219,10 @@ Findings that shaped it:
 - Calibrate FastFallSpeed and FastReleaseDistance independently of the slow path (currently scaled together).
 - Press side: a CUSUM on rises could allow a smaller ActivationDistance (gain is sub-ms at 1000 Hz).
 - `HoverDistance` (IntuosV3 byte 13) could hint at an imminent contact, but any prediction risks false presses.
-- Per-pressure-band thresholds if real drags show noise growing with force.
+- Per-pressure-band thresholds if real drags show noise growing with force (on the play log a pressure-
+  proportional fall allowance gained only ~1 ms; see above).
+- If the firmware starts sampling pressure every ms, FastReleaseDistance 20 is too low for noise (synthetic
+  1 kHz drags cut out); 40 was fine there. `rt replay` prints the sample interval.
 
 ---
 

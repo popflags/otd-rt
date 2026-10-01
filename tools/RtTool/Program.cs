@@ -80,12 +80,18 @@ static int Replay(Options o)
 
         Console.WriteLine();
         Console.WriteLine($"== {log.Name}: {log.Count} samples, {log.Duration / 1000:F1} s, median interval {interval:F2} ms ({1000 / interval:F0} Hz)");
+        Console.WriteLine($"   pressure changes every {Analysis.MedianSampleInterval(log):F1} ms (median while pressed)");
         Console.WriteLine($"   sensor noise sigma {noise:F1} -> keep Activation Distance >= {RecommendedActivation(noise):F0}");
         Console.WriteLine($"   presses {result.Presses} (contact {result.Count(TriggerEvent.Contact)}, rearm {result.Count(TriggerEvent.Rearm)}), " +
                           $"releases {result.Count(TriggerEvent.FastRelease) + result.Count(TriggerEvent.Release) + result.Count(TriggerEvent.Lift)} " +
                           $"(fast {result.Count(TriggerEvent.FastRelease)}, distance {result.Count(TriggerEvent.Release)}, lift {result.Count(TriggerEvent.Lift)})");
 
         PrintTimings("   release timing", Analysis.ReleaseTimings(result));
+
+        var leads = Analysis.LeadBeforeLift(result, o.LiftWindow);
+        if (leads.Count > 0)
+            Console.WriteLine($"   release lead before lift (ms, larger = earlier; strokes that end in a lift): p50 {Analysis.Percentile(leads, 0.5):F1}, " +
+                              $"p10 {Analysis.Percentile(leads, 0.1):F1}, mean {leads.Average():F1}");
 
         var cutOuts = Analysis.CutOuts(result, o.LiftWindow);
         Console.WriteLine($"   cut-outs if this was a continuous drag: {cutOuts.Count}");
@@ -117,12 +123,13 @@ static int Calibrate(Options o)
     var baseSettings = o.Settings;
 
     double noise = drags.Concat(taps).Max(Analysis.NoiseSigma);
+    double sampleInterval = drags.Concat(taps).Select(Analysis.MedianSampleInterval).Where(v => !double.IsNaN(v)).DefaultIfEmpty(1).Min();
     double minReleaseDistance = Math.Max(10 * noise, baseSettings.ActivationDistance);
     double activation = Math.Max(baseSettings.ActivationDistance, RecommendedActivation(noise));
 
     Console.WriteLine($"Drag logs: {string.Join(", ", drags.Select(d => d.Name))}");
     Console.WriteLine($"Tap logs:  {(taps.Count == 0 ? "(none - release speed measured on drag ends only)" : string.Join(", ", taps.Select(d => d.Name)))}");
-    Console.WriteLine($"Sensor noise sigma: {noise:F1} -> Activation Distance {activation:F0}, release distance floor {minReleaseDistance:F0}");
+    Console.WriteLine($"Sensor noise sigma: {noise:F1} -> Activation Distance {activation:F0}, release distance floor {minReleaseDistance:F0}; pressure sample interval {sampleInterval:F1} ms");
     Console.WriteLine($"Margin: x{1 + o.Margin:F2} on top of the smallest stable release distance");
     Console.WriteLine();
     Console.WriteLine("drift ms  fast fall | stable x | used x | rel.dist  ratio    max | drag-end release ms p50/p90 | tap release ms p50/p90 | missed taps");
@@ -153,8 +160,10 @@ static int Calibrate(Options o)
             used *= minReleaseDistance / candidate.ReleaseDistance;
             candidate = Scale(tauSettings, used);
         }
-        // The fast detector integrates noise too: keep it clear of what noise alone can add up to.
-        candidate.FastReleaseDistance = Math.Max(candidate.FastReleaseDistance, 4 * noise);
+        // The fast detector integrates noise too: keep it clear of what noise alone can add up to. Each pressure
+        // sample is first charged the drag allowance for the time since the previous one, which absorbs the noise
+        // when samples are far apart (PTK-670: ~9 ms).
+        candidate.FastReleaseDistance = Math.Max(candidate.FastReleaseDistance, 4 * noise - fastFall * sampleInterval);
 
         var dragEnd = drags.SelectMany(d => Analysis.ReleaseTimings(Analysis.Replay(d, candidate))).Select(t => t.MsSinceFallStart).ToList();
         var tapTimes = new List<double>();

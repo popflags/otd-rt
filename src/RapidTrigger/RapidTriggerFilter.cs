@@ -123,15 +123,15 @@ namespace RapidTrigger
         public double ActivationDistance { set; get; } = 40;
 
         [Property("Fast Fall Speed"), DefaultPropertyValue(20.0), Unit("raw/ms"), ToolTip(
-            "Fast release detector: the fastest pressure fall a drag produces. Only the part of each report's\n" +
+            "Fast release detector: the fastest pressure fall a drag produces. Only the part of each pressure sample's\n" +
             "fall above this speed counts towards Fast Release Distance, so drag dips never add up.\n" +
             "Higher = steadier drags, later tap releases. 0 = detector off.")]
         public double FastFallSpeed { set; get; } = 20;
 
-        [Property("Fast Release Distance"), DefaultPropertyValue(40.0), Unit("raw"), ToolTip(
+        [Property("Fast Release Distance"), DefaultPropertyValue(20.0), Unit("raw"), ToolTip(
             "Fast release detector: release once the fall in excess of Fast Fall Speed adds up to this.\n" +
             "Lower = earlier tap releases. Keep it well above the pressure noise.")]
-        public double FastReleaseDistance { set; get; } = 40;
+        public double FastReleaseDistance { set; get; } = 20;
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +

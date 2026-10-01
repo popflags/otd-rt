@@ -52,6 +52,32 @@ namespace RapidTrigger.Tests
             }
         }
 
+        /// <summary>
+        /// Repeats every <paramref name="reports"/>-th value for the following reports, like the PTK-670 on 1000 Hz
+        /// firmware: 1000 reports/s but a new pressure sample only every ~9 ms.
+        /// </summary>
+        public static IEnumerable<double> SampleAndHold(IEnumerable<double> signal, int reports = 9)
+        {
+            int i = 0;
+            double held = 0;
+            foreach (double v in signal)
+            {
+                if (i++ % reports == 0)
+                    held = v;
+                yield return held;
+            }
+        }
+
+        /// <summary>Real pressure samples, each held for <paramref name="reports"/> reports.</summary>
+        public static IEnumerable<double> Samples(int reports, params double[] samples)
+        {
+            foreach (double v in samples)
+            {
+                for (int i = 0; i < reports; i++)
+                    yield return v;
+            }
+        }
+
         public static List<(int Index, TriggerEvent Event)> Run(TriggerEngine engine, IEnumerable<double> signal, int startIndex = 0)
         {
             var events = new List<(int, TriggerEvent)>();

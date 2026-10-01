@@ -92,29 +92,79 @@ namespace RapidTrigger.Tests
             Assert.Empty(events);
         }
 
-        [Fact]
-        public void SensorNoiseOnAStillHoldDoesNotRelease()
+        // Defaults are tuned for pressure sampled every ~9 ms (PTK-670). With a new noisy sample every ms, noise adds
+        // up in the fast detector, and Fast Release Distance has to go back up to 40.
+        private static TriggerSettings EveryReportSampled() => new() { FastReleaseDistance = 40 };
+
+        [Theory]
+        [InlineData(9)]
+        [InlineData(1)]
+        public void SensorNoiseOnAStillHoldDoesNotRelease(int sampleReports)
         {
-            // +-25 uniform noise (sigma ~14) on a 3000 hold for 20 seconds at 1000 Hz.
-            var engine = Engine();
+            // +-25 uniform noise (sigma ~14) on a 3000 hold for 20 seconds.
+            var engine = Engine(sampleReports == 1 ? EveryReportSampled() : null);
             HoldAt(engine, 3000);
 
-            var events = Signals.Run(engine, Signals.Drag(3000, 20000, 0, 400, 0, 25, seed: 7));
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(3000, 20000, 0, 400, 0, 25, seed: 7), sampleReports));
 
             Assert.Empty(events);
         }
 
-        [Fact]
-        public void SlowDipsTremorAndNoiseDuringADragDoNotRelease()
+        [Theory]
+        [InlineData(9)]
+        [InlineData(1)]
+        public void SlowDipsTremorAndNoiseDuringADragDoNotRelease(int sampleReports)
         {
             // 30% dips over 400 ms, +-3% tremor at 9 Hz and +-15 noise, for 5 seconds.
-            var engine = Engine();
+            var engine = Engine(sampleReports == 1 ? EveryReportSampled() : null);
             Signals.Run(engine, Signals.Ramp(0, 5000, 60));
 
-            var events = Signals.Run(engine, Signals.Drag(5000, 5000, 0.30, 400, 0.03, 15, seed: 1));
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(5000, 5000, 0.30, 400, 0.03, 15, seed: 1), sampleReports));
 
             Assert.Empty(events);
             Assert.True(engine.Pressed);
+        }
+
+        [Theory]
+        // Hold dips from recordings/play-ptk670-20261001.csv that the previous version released on.
+        [InlineData(new double[] { 7246, 7223, 7207, 7194, 7171, 7064, 7054, 7097, 7171, 7278 })]
+        [InlineData(new double[] { 7119, 7113, 7051, 6946, 6826, 6726, 6649, 6630, 6694, 6759, 6753 })]
+        [InlineData(new double[] { 8191, 8115, 8022, 7943, 7878, 7810, 7764, 7735, 7742, 7776, 7796 })]
+        [InlineData(new double[] { 8191, 8184, 8100, 8023, 8004, 8069, 8141, 8186 })]
+        public void RealHoldDipsSampledEvery9MsDoNotRelease(double[] samples)
+        {
+            var engine = Engine();
+            Signals.Run(engine, Signals.Samples(9, samples[0]));
+
+            var events = Signals.Run(engine, Signals.Samples(9, samples));
+
+            Assert.Empty(events);
+            Assert.True(engine.Pressed);
+        }
+
+        [Fact]
+        public void RepeatedValuesAreNotNewSamples()
+        {
+            // A fall of 107 every 9 ms (12 units/ms) is slower than the 20 units/ms allowance. Counted per report
+            // instead of per sample, it looked like 107 units in 1 ms.
+            var engine = Engine();
+            HoldAt(engine, 7200);
+
+            Assert.Empty(Signals.Run(engine, Signals.Samples(9, 7200, 7093, 6986, 6879)));
+        }
+
+        [Fact]
+        public void RealTapReleasesOnItsSecondFallingSample()
+        {
+            // A tap from the recording, one pressure sample per 9 reports: 2947 -> 2825 is still drag speed,
+            // 2825 -> 2342 is not.
+            var engine = Engine();
+            engine.Update(0, 1);
+
+            var events = Signals.Run(engine, Signals.Samples(9, 2768, 2947, 2825, 2342, 1862, 1105, 0));
+
+            Assert.Equal((0, TriggerEvent.Contact), events[0]);
+            Assert.Equal((27, TriggerEvent.FastRelease), events[1]);
         }
 
         [Fact]
