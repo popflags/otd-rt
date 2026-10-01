@@ -30,7 +30,7 @@ tests/RapidTrigger.Tests/                xunit tests on synthetic 1000 Hz signal
 recordings/                              real diagnostics CSVs from the tablet (commit them here)
 scripts/cloud-setup.sh                   SessionStart hook: installs the .NET 8 SDK in cloud sessions
 .github/workflows/ci.yml                 build + test + replay recordings on every push, uploads DLL artifact
-.github/workflows/release.yml            on tag v*: build + GitHub release with RapidTrigger.zip/.dll + RtTool.zip
+.github/workflows/release.yml            on a new <Version> (main, claude/*) or tag v*: GitHub release with RapidTrigger.zip/.dll + RtTool.zip
 ```
 
 ## Commands
@@ -52,8 +52,9 @@ shell is zsh. `$VAR` with spaces doesn't word-split there, so wrap loops in `bas
 
 Every push runs CI and uploads `RapidTrigger-<sha>` (RapidTrigger.zip + RtTool.zip) as an artifact on
 the Actions run page. The owner extracts RapidTrigger.zip into `%localappdata%\OpenTabletDriver\Plugins\`
-and restarts OTD. Releases: bump `<Version>` in `src/RapidTrigger/RapidTrigger.csproj`, then
-`git tag -a vX.Y.Z -m ... && git push origin vX.Y.Z`. Commit messages end with the Co-Authored-By trailer.
+and restarts OTD. Releases: bump `<Version>` in `src/RapidTrigger/RapidTrigger.csproj` and push to `main` or a
+`claude/*` branch; `release.yml` creates the `vX.Y.Z` tag and the GitHub release when that tag does not exist
+yet (cloud sessions cannot push tags). Pushing a `v*` tag by hand still works. Commit messages end with the Co-Authored-By trailer.
 
 ## OpenTabletDriver facts (verified in its source, v0.6.7 and branches as of 2026-10)
 
