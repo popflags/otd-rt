@@ -48,14 +48,21 @@ written by a background thread.
 
 ## Install
 
-Requires the .NET 8 SDK.
+Download `RapidTrigger.zip` from the
+[latest release](https://github.com/popflags/otd-rt/releases/latest), or a test build from any CI run
+(Actions → run → Artifacts). Extract it into the plugins folder:
+
+- Linux: `~/.config/OpenTabletDriver/Plugins/`
+- Windows: `%localappdata%\OpenTabletDriver\Plugins\`
+
+To build it yourself, you need the .NET 8 SDK:
 
 ```sh
 ./build.sh
 cp -r dist/RapidTrigger ~/.config/OpenTabletDriver/Plugins/
 ```
 
-Restart the OpenTabletDriver daemon. Then, in the Filters tab:
+Restart OpenTabletDriver. Then, in the Filters tab:
 
 1. Remove older Rapid Trigger plugin versions.
 2. Enable **Rapid Trigger** and put it first in the filter list, ahead of any smoothing or
@@ -68,7 +75,9 @@ Restart the OpenTabletDriver daemon. Then, in the Filters tab:
 Defaults are a starting point. They come from replaying an old 300 Hz log and synthetic 1000 Hz
 drags and taps; your hand, nib and firmware decide the real numbers.
 
-1. Enable **Enable Diagnostics**. Each daemon start writes `~/rapid-trigger-logs/rt-<time>.csv`.
+1. Enable **Enable Diagnostics**. Each time the filter is applied, it writes
+   `~/rapid-trigger-logs/rt-<time>.csv` (Windows: `C:\Users\<you>\rapid-trigger-logs\`).
+   Commit recordings to `recordings/` (see its README); CI replays them on every push.
 2. Record a **drag session**: 1–2 minutes of the drags you do in game (slow, fast, circles, long
    holds, light and heavy pressure). Lift only at the end of each drag. Restart the daemon (or toggle
    the filter) to start a new file.
@@ -114,6 +123,12 @@ estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
 src/RapidTrigger/         plugin (TriggerEngine.cs has no OpenTabletDriver dependency)
 tools/RtTool/             replay + calibration CLI, compiles the same TriggerEngine.cs
 tests/RapidTrigger.Tests/ engine tests on synthetic 1000 Hz signals
+tools/synth_logs.py       synthetic drag/tap logs for experiments
+recordings/               real recordings for replay and calibration
 ```
+
+`RtTool.zip` (in releases and CI artifacts) runs on any machine with the .NET 8 runtime:
+`dotnet rt.dll --help`. `CLAUDE.md` holds the design history and measurements for AI-assisted
+development; cloud sessions install the SDK through `scripts/cloud-setup.sh`.
 
 `dotnet test tests/RapidTrigger.Tests` runs the tests.

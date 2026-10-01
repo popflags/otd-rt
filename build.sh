@@ -10,13 +10,20 @@ dotnet build tools/RtTool -c Release
 rm -rf dist
 mkdir -p dist/RapidTrigger
 cp src/RapidTrigger/bin/Release/net8.0/RapidTrigger.dll dist/RapidTrigger/
-if command -v zip >/dev/null; then
-    (cd dist && zip -qr RapidTrigger.zip RapidTrigger)
-else
-    (cd dist && python3 -m zipfile -c RapidTrigger.zip RapidTrigger)
-fi
+mkdir -p dist/RtTool
+cp tools/RtTool/bin/Release/net8.0/rt.dll tools/RtTool/bin/Release/net8.0/rt.runtimeconfig.json dist/RtTool/
+
+pack() {
+    if command -v zip >/dev/null; then
+        (cd dist && zip -qr "$1.zip" "$1")
+    else
+        (cd dist && python3 -m zipfile -c "$1.zip" "$1")
+    fi
+}
+pack RapidTrigger
+pack RtTool
 
 echo
 echo "Plugin:  dist/RapidTrigger/RapidTrigger.dll  (zip: dist/RapidTrigger.zip)"
 echo "Install: copy dist/RapidTrigger into ~/.config/OpenTabletDriver/Plugins/ and restart the daemon"
-echo "Tool:    dotnet tools/RtTool/bin/Release/net8.0/rt.dll --help"
+echo "Tool:    dotnet dist/RtTool/rt.dll --help  (zip: dist/RtTool.zip, runs anywhere with the .NET 8 runtime)"
