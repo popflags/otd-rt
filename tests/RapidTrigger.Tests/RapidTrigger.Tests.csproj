@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\RapidTrigger\TriggerEngine.cs" Link="TriggerEngine.cs" />
+    <Compile Include="..\..\src\AnglePreservingSensitivity\DirectionalScale.cs" Link="DirectionalScale.cs" />
   </ItemGroup>
 
   <ItemGroup>

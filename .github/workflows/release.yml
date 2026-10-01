@@ -69,9 +69,12 @@ jobs:
           generate_release_notes: true
           body: |
             Install: extract `RapidTrigger.zip` into `~/.config/OpenTabletDriver/Plugins/` (Windows: `%localappdata%\OpenTabletDriver\Plugins\`), restart the OpenTabletDriver daemon, then enable **Rapid Trigger** first in the filter list.
+            `AnglePreservingSensitivity.zip` is a separate plugin for relative mode (install the same way): set OTD's X and Y sensitivity equal and set its Vertical Speed to vertical / horizontal; vertical moves slower without bending diagonals.
             Built against OpenTabletDriver 0.6.7. Set the pen tip threshold to 0% in the Bindings tab. See the README for settings and calibration.
             `RtTool.zip` is the replay/calibration tool: `dotnet rt.dll --help` (needs the .NET 8 runtime, which OpenTabletDriver already requires).
           files: |
             dist/RapidTrigger.zip
             dist/RapidTrigger/RapidTrigger.dll
+            dist/AnglePreservingSensitivity.zip
+            dist/AnglePreservingSensitivity/AnglePreservingSensitivity.dll
             dist/RtTool.zip

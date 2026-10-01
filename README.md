@@ -136,10 +136,29 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 | Preserve Pressure | off | Pass real pressure instead of full pressure while pressed. |
 | Enable Diagnostics / Diagnostics Directory | off / `~/rapid-trigger-logs` | Per-report CSV for replay and calibration. |
 
+## Angle-Preserving Sensitivity (separate plugin)
+
+`AnglePreservingSensitivity.zip`, a separate DLL in every release, for **relative mode** (Linux "Relative
+Mode" and Windows "VMulti Relative Mode"). A lower vertical sensitivity in OTD (X ≠ Y) also bends
+diagonals: with Y at 72% of X, a 45° stroke comes out at ~36° and circles become ellipses. This plugin
+keeps the slower vertical speed but leaves every movement's direction alone.
+
+1. Install it like Rapid Trigger and enable **Angle-Preserving Sensitivity**. It runs after OTD's
+   transform (post-transform), so its place in the list does not matter.
+2. In the output tab, set the X and Y sensitivity to the **same** value: your horizontal one.
+3. Set **Vertical Speed** to vertical ÷ horizontal sensitivity, e.g. 20.617 / 28.589 = **72.1 %**.
+
+Each report's movement keeps its direction and gets the length an X:Y sensitivity would have given it:
+horizontal unchanged, vertical × Vertical Speed, diagonals in between. It works on each report on its
+own (no smoothing, no history), so it adds no latency. Very slow movements of one or two tablet units
+per report have a coarse direction, so they behave like the per-axis ratio. Do not use it in absolute
+mode: there the post-transform position is a screen position, not a movement.
+
 ## Development
 
 ```
 src/RapidTrigger/         plugin (TriggerEngine.cs has no OpenTabletDriver dependency)
+src/AnglePreservingSensitivity/  separate relative-mode plugin (DirectionalScale.cs is OTD-free)
 tools/RtTool/             replay + calibration CLI, compiles the same TriggerEngine.cs
 tests/RapidTrigger.Tests/ engine tests on synthetic 1000 Hz signals
 tools/synth_logs.py       synthetic drag/tap logs for experiments

@@ -24,6 +24,7 @@ useful from them is summarized below.
 src/RapidTrigger/TriggerEngine.cs        the whole algorithm, no OTD dependency, allocation-free
 src/RapidTrigger/RapidTriggerFilter.cs   OTD 0.6 filter: properties, timing, output pressure, diagnostics
 src/RapidTrigger/DiagnosticsRecorder.cs  per-report CSV via Channel + background thread
+src/AnglePreservingSensitivity/          separate plugin DLL, own version: relative-mode direction-preserving X:Y speed
 tools/RtTool/                            `rt` CLI: replay + calibrate; compiles TriggerEngine.cs via <Compile Link>
 tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1000 Hz data)
 tests/RapidTrigger.Tests/                xunit tests on synthetic 1000 Hz signals (Signals.cs)
@@ -267,6 +268,20 @@ Findings that shaped it:
   usage text in sync.
 - Every behaviour change: add or adjust a test in `TriggerEngineTests`, run `rt replay` on
   `recordings/` and the synthetic logs, and report before/after numbers honestly (including regressions).
+
+## Angle-Preserving Sensitivity (separate plugin, 1.0.0, shipped with RT 2.4.0)
+
+The owner plays S4 League (3D melee) in relative mode (VMulti Relative on Windows, Relative Mode on Linux)
+with X:Y sensitivity 28.58895 : 20.617332 px/mm (726 : 524 DPI): vertical strokes are finger-only, so a
+lower Y trades range for precision and keeps them off the pitch limit. Drawback the owner wanted fixed:
+per-axis scaling bends directions (45° → 35.8°). Verified in OTD v0.6.7 `RelativeOutputMode.Transform`:
+after the transform, the report position is the per-report delta in px (rotation and sensitivity
+applied), so a PostTransform filter can rescale it statelessly. `RelativeMode` (Linux) derives from
+`RelativeOutputMode`; the VMulti relative mode source was not reachable from the cloud session but it shows
+the same relative settings, so it is assumed to derive from it too.
+Math (`DirectionalScale.Apply`): `delta · sqrt((dx² + r²·dy²) / (dx² + dy²))`, r = Vertical Speed / 100:
+direction unchanged, length equal to what X:Y = 1 : r would give. Tested in `DirectionalScaleTests`.
+Not done: vertical-only acceleration (owner did not ask), circle speed variation (inherent to any r ≠ 1).
 
 ## Ideas not yet explored
 

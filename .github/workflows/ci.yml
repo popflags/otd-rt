@@ -34,4 +34,5 @@ jobs:
           name: RapidTrigger-${{ github.sha }}
           path: |
             dist/RapidTrigger.zip
+            dist/AnglePreservingSensitivity.zip
             dist/RtTool.zip

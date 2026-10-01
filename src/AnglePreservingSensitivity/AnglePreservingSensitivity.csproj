@@ -4,9 +4,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>RapidTrigger</AssemblyName>
-    <RootNamespace>RapidTrigger</RootNamespace>
-    <Version>2.4.0</Version>
+    <AssemblyName>AnglePreservingSensitivity</AssemblyName>
+    <RootNamespace>AnglePreservingSensitivity</RootNamespace>
+    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
