@@ -10,7 +10,11 @@ dotnet build tools/RtTool -c Release
 rm -rf dist
 mkdir -p dist/RapidTrigger
 cp src/RapidTrigger/bin/Release/net8.0/RapidTrigger.dll dist/RapidTrigger/
-(cd dist && zip -qr RapidTrigger.zip RapidTrigger)
+if command -v zip >/dev/null; then
+    (cd dist && zip -qr RapidTrigger.zip RapidTrigger)
+else
+    (cd dist && python3 -m zipfile -c RapidTrigger.zip RapidTrigger)
+fi
 
 echo
 echo "Plugin:  dist/RapidTrigger/RapidTrigger.dll  (zip: dist/RapidTrigger.zip)"
