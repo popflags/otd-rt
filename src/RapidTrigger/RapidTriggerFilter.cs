@@ -72,6 +72,7 @@ namespace RapidTrigger
                 ContactThreshold = ContactThreshold,
                 PhantomContactPressure = PhantomContactPressure,
                 PhantomConfirmTime = PhantomConfirmTime,
+                DropoutTime = DropoutTime,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
                 ActivationPercent = ActivationPercent,
@@ -126,6 +127,12 @@ namespace RapidTrigger
             "How long a contact that starts at Phantom Contact Pressure must last before it presses.")]
         public double PhantomConfirmTime { set; get; } = 20;
 
+        [Property("Dropout Time"), DefaultPropertyValue(12.0), Unit("ms"), ToolTip(
+            "While pressed, a drop straight from Phantom Contact Pressure (max) to zero is held back this long.\n" +
+            "If pressure comes back in that time, the zero is ignored as a sensor dropout and the tip stays down.\n" +
+            "Only delays lifts straight from max pressure to zero. 0 = off.")]
+        public double DropoutTime { set; get; } = 12;
+
         [Property("Lift Threshold"), DefaultPropertyValue(2.0), Unit("raw"), ToolTip(
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]
         public double LiftThreshold { set; get; } = 2;
@@ -140,17 +147,17 @@ namespace RapidTrigger
             "Keeps wobble on heavy releases from re-pressing while light re-presses stay quick.")]
         public double ActivationPercent { set; get; } = 0.5;
 
-        [Property("Fast Fall Speed"), DefaultPropertyValue(0.5), Unit("raw/ms"), ToolTip(
+        [Property("Fast Fall Speed"), DefaultPropertyValue(1.5), Unit("raw/ms"), ToolTip(
             "Fast release detector: fixed part of the drag allowance. Falls slower than\n" +
             "Fast Fall Speed + Fast Fall Percent of the pressure are what a drag or hold can do; only the part of each\n" +
             "pressure sample's fall above it counts towards Fast Release Distance.\n" +
             "Higher = steadier drags, later releases. Both 0 = detector off.")]
-        public double FastFallSpeed { set; get; } = 0.5;
+        public double FastFallSpeed { set; get; } = 1.5;
 
-        [Property("Fast Fall Percent"), DefaultPropertyValue(0.25), Unit("%/ms"), ToolTip(
+        [Property("Fast Fall Percent"), DefaultPropertyValue(0.22), Unit("%/ms"), ToolTip(
             "Fast release detector: part of the drag allowance that grows with pressure (hand wobble grows with force).\n" +
             "Higher = steadier heavy holds, later releases and missed shallow re-presses without lifting.")]
-        public double FastFallPercent { set; get; } = 0.25;
+        public double FastFallPercent { set; get; } = 0.22;
 
         [Property("Fast Release Distance"), DefaultPropertyValue(10.0), Unit("raw"), ToolTip(
             "Fast release detector: release once the fall in excess of the drag allowance adds up to this.\n" +

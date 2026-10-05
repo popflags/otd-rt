@@ -40,6 +40,14 @@ namespace RapidTrigger
         /// <summary>How long a contact that starts at PhantomContactPressure must last before it presses, in ms.</summary>
         public double PhantomConfirmTime { get; set; } = 20;
 
+        /// <summary>
+        /// While pressed, a drop straight from PhantomContactPressure (max) to the lift threshold is held back this long,
+        /// in ms. If pressure comes back above the lift threshold in that time, the drop is ignored as a sensor dropout
+        /// (max, 0, max); otherwise it releases as a lift. Costs only lifts straight from max pressure to zero, which
+        /// no pressed stroke in the recordings did. 0 = off.
+        /// </summary>
+        public double DropoutTime { get; set; } = 12;
+
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
 
@@ -61,14 +69,14 @@ namespace RapidTrigger
         /// allowance (times the time since the previous sample) counts towards FastReleaseDistance.
         /// Both 0 = detector off.
         /// </summary>
-        public double FastFallSpeed { get; set; } = 0.5;
+        public double FastFallSpeed { get; set; } = 1.5;
 
         /// <summary>
         /// Fast-fall detector: the part of the drag allowance that grows with pressure, in % of the current pressure
         /// per ms. Hand wobble grows with force: on the PTK-670 recording, hold dips at 7000-8191 fell up to
         /// 13 raw/ms, while re-presses without lifting at lighter pressure need a smaller allowance to release.
         /// </summary>
-        public double FastFallPercent { get; set; } = 0.25;
+        public double FastFallPercent { get; set; } = 0.22;
 
         /// <summary>
         /// Fast-fall detector: release once the fall in excess of the allowance adds up to this (a one-sided CUSUM).
@@ -127,6 +135,12 @@ namespace RapidTrigger
         // Time a suspected phantom contact has lasted; negative = none pending.
         private double _phantomMs = -1;
 
+        // Time since a suspected dropout (max pressure straight to zero) started; negative = none pending.
+        private double _dropoutMs = -1;
+
+        // Report time held back while a dropout was pending, handed to the state machine once it resolves.
+        private double _deferredMs;
+
         public TriggerEngine(TriggerSettings settings)
         {
             _settings = settings.Clone();
@@ -159,6 +173,8 @@ namespace RapidTrigger
             _sinceChangeMs = 0;
             _fresh = true;
             _phantomMs = -1;
+            _dropoutMs = -1;
+            _deferredMs = 0;
             CurrentReleaseDistance = 0;
             HoldReference = 0;
             FallExcess = 0;
@@ -171,11 +187,15 @@ namespace RapidTrigger
                 elapsedMs = 0;
 
             double p = pressure;
+
+            if (Pressed && HoldDropout(p, ref elapsedMs))
+                return TriggerEvent.None;
+
             double previous = _previousPressure;
             _previousPressure = p;
 
             // Some tablets sample pressure slower than they send reports and repeat the last value in between
-            // (the PTK-670 on 1000 Hz firmware: a new pressure sample every ~9 reports). A change then covers all the
+            // (the PTK-670 on 1000 Hz firmware: a new pressure sample every 5 reports, ~9 on older firmware). A change then covers all the
             // time since the previous change, not just the last report interval.
             _sinceChangeMs += elapsedMs;
             double sampleMs = _sinceChangeMs;
@@ -183,6 +203,38 @@ namespace RapidTrigger
                 _sinceChangeMs = 0;
 
             return Pressed ? UpdatePressed(p, previous, elapsedMs, sampleMs) : UpdateReleased(p, previous, elapsedMs);
+        }
+
+        /// <summary>
+        /// Holds back a fall straight from max pressure to zero until it has lasted DropoutTime. Returns true while it
+        /// is held back. The previous pressure stays at the level before the drop, so if pressure comes back the zero
+        /// never happened; once it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
+        /// </summary>
+        private bool HoldDropout(double p, ref double elapsedMs)
+        {
+            var s = _settings;
+            bool zero = p <= s.LiftThreshold;
+
+            if (_dropoutMs < 0)
+            {
+                if (!zero || s.DropoutTime <= 0 || s.PhantomContactPressure <= 0 || _previousPressure < s.PhantomContactPressure)
+                    return false;
+                _dropoutMs = 0;
+                _deferredMs = elapsedMs;
+                return true;
+            }
+
+            if (zero && _dropoutMs + elapsedMs < s.DropoutTime)
+            {
+                _dropoutMs += elapsedMs;
+                _deferredMs += elapsedMs;
+                return true;
+            }
+
+            elapsedMs += _deferredMs;
+            _dropoutMs = -1;
+            _deferredMs = 0;
+            return false;
         }
 
         private TriggerEvent UpdateReleased(double p, double previous, double elapsedMs)

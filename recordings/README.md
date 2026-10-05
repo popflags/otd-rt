@@ -15,6 +15,7 @@ Real diagnostics CSVs from the tablet, used by `rt replay` / `rt calibrate` and 
 
 | File | Content |
 |---|---|
+| `play-ptk670-5ms-20261005.csv` | 84 s of play after a firmware change: pressure sampled every 5 ms (1000 reports/s). 106 strokes, all lifted (~93 taps, 13 holds up to 8191), 2 phantom 8191 samples right before contacts, 1 landing-wobble re-press. Recorded with 2.4.0 defaults. |
 | `play-ptk670-newtip-20261001.csv` | 231 s of S4 League with another nib, recorded with 2.3.0: 231 strokes (175 taps, 55 holds), 8 phantom one-sample 8191 contacts after lifts, 12 re-presses inside strokes. Same 9 ms pressure sampling. |
 | `play-ptk670-20261001.csv` | 108 s of play, recorded with the defaults of the time: 103 strokes, all lifted (≈70 taps of 10–210 ms, ≈32 holds of 320–810 ms at 6000–8191). Pressure changes every ~9 ms (1000 reports/s). No drags longer than 0.8 s, no re-presses without lifting. |
 3. Copy the files here and commit them (from a cloud session: upload/paste them, or push from any machine).

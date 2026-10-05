@@ -1,7 +1,7 @@
 # Rapid Trigger for OpenTabletDriver
 
 Rapid trigger for the pen tip on OpenTabletDriver 0.6.x (built against 0.6.7), tuned for high report rate tablets
-(developed on a Wacom PTK-670 sending 1000 reports/s, with a new pressure sample every ~9 ms). Taps press and release as early as the pressure
+(developed on a Wacom PTK-670 sending 1000 reports/s, with a new pressure sample every 5 ms on current firmware, ~9 ms before). Taps press and release as early as the pressure
 signal allows, while drags stay held through normal pressure wobble.
 
 > Rapid trigger can trip anti-cheats or break game rules. Use at your own risk.
@@ -25,7 +25,7 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
   since the previous sample: (**Fast Fall Speed** + **Fast Fall Percent** of the pressure) × elapsed ms.
   The allowance grows with pressure because hand wobble grows with force, so heavy holds stay down
   while lighter re-presses without lifting still release. Reports that repeat the last pressure value
-  are not new samples: the PTK-670 on 1000 Hz firmware repeats each value for ~9 reports. Rises and
+  are not new samples: the PTK-670 on 1000 Hz firmware repeats each value for 5 reports (~9 on older firmware). Rises and
   slow falls drain it back to zero. It releases once the excess reaches **Fast Release Distance**.
   Drag dips are slower than the allowance, so they never add up. A real release starts counting the moment it gets faster than any
   drag, with no smoothing lag. This is Page's CUSUM change detector, the standard quickest-detection
@@ -34,7 +34,9 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
   instantly and drifts toward the current pressure with **Drift Time Constant**. Slow easing off
   during a drag is absorbed, while deliberate releases that are slower than the allowance are still
   caught. The reference stops drifting while a fast fall is building up.
-- *Lift*: pressure at or below **Lift Threshold** always releases.
+- *Lift*: pressure at or below **Lift Threshold** always releases. One exception: a drop straight from
+  max pressure (**Phantom Contact Pressure**) to zero waits **Dropout Time**, and is ignored if pressure
+  comes back in that time (a sensor dropout: max, 0, max).
 
 While pressed, the plugin reports **full pressure** (unless *Preserve Pressure* is on). The tip
 binding therefore fires on the very first pressed report, whatever the tip threshold in the Bindings
@@ -122,11 +124,12 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 |---|---|---|
 | Contact Threshold | 4 | First press from the air. Lower = earlier. |
 | Phantom Contact Pressure / Phantom Confirm Time | 8191 / 20 ms | A contact that starts at or above this pressure must last this long to press (filters one-sample max-pressure glitches after a lift). 0 = off. |
+| Dropout Time | 12 ms | While pressed, a drop straight from max pressure to zero waits this long and is ignored if pressure comes back (max, 0, max dropouts). Only delays lifts straight from max to zero. 0 = off. |
 | Lift Threshold | 2 | Always released at or below this. |
 | Activation Distance | 20 | Re-press rise above the trough (fixed part). Keep the total ≥ 6× noise sigma. |
 | Activation Percent | 0.5 % | Part of the re-press rise that grows with the trough pressure (27 at 1500, 55 at 7000). |
-| Fast Fall Speed | 0.5 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
-| Fast Fall Percent | 0.25 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
+| Fast Fall Speed | 1.5 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
+| Fast Fall Percent | 0.22 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |

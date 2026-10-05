@@ -124,12 +124,13 @@ namespace RapidTrigger.Tests
             Assert.Empty(events);
         }
 
-        // Defaults are tuned for pressure sampled every ~9 ms (PTK-670). With a new noisy sample every ms, noise adds
+        // Defaults are tuned for pressure sampled every 5 ms (PTK-670, current firmware; ~9 ms before). With a new noisy sample every ms, noise adds
         // up in the fast detector: these are the settings for that case (fixed 20 units/ms allowance, distance 40).
         private static TriggerSettings EveryReportSampled() => new() { FastFallSpeed = 20, FastFallPercent = 0, FastReleaseDistance = 40 };
 
         [Theory]
         [InlineData(9)]
+        [InlineData(5)]
         [InlineData(1)]
         public void SensorNoiseOnAStillHoldDoesNotRelease(int sampleReports)
         {
@@ -144,8 +145,12 @@ namespace RapidTrigger.Tests
 
         [Theory]
         // Defaults, PTK-670 sampling: 15% dips over 400 ms + 2% tremor peak at ~11.6 units/ms, under the allowance at
-        // 5000 (13 units/ms). Real hold dips on the recording peaked at 13 units/ms at 7000-8191.
+        // 5000 (12.5 units/ms). Real hold dips on the recording peaked at 13 units/ms at 7000-8191.
         [InlineData(9, 0.15, 0.02)]
+        // 5 ms sampling (current firmware): the same +-15 noise per sample is larger relative to the allowance per
+        // sample, so the 15% dip drag above sits at the edge: over many seeds the 0.5/0.25 and 1.5/0.22 allowances cut
+        // out about equally often (this seed: only the new one). 10% dips hold.
+        [InlineData(5, 0.10, 0.02)]
         // The harsher made-up drag (30% dips + 3% tremor, ~20 units/ms) only holds with the fixed 20 units/ms
         // allowance. That is the trade made for faster releases and re-presses without lifting.
         [InlineData(1, 0.30, 0.03)]
@@ -221,7 +226,7 @@ namespace RapidTrigger.Tests
         public void RealTapReleasesOnItsFirstFallingSample()
         {
             // A tap from the recording, one pressure sample per 9 reports: 2947 -> 2825 is 122 down in 9 ms, above the
-            // allowance at 2947 (0.5 + 0.25% = 7.9 units/ms, 71 per sample) by more than 10.
+            // allowance at 2947 (1.5 + 0.22% = 8.0 units/ms, 72 per sample) by more than 10.
             var engine = Engine();
             engine.Update(0, 1);
 
@@ -229,6 +234,97 @@ namespace RapidTrigger.Tests
 
             Assert.Equal((0, TriggerEvent.Contact), events[0]);
             Assert.Equal((18, TriggerEvent.FastRelease), events[1]);
+        }
+
+        [Fact]
+        public void RealTapSampledEvery5MsReleasesOnItsSecondFastSample()
+        {
+            // The end of a tap from recordings/play-ptk670-5ms-20261005.csv (t = 6.75 s). The first falls (8-35 per
+            // sample) look like any hold; 5350 -> 5276 (74) is 8 over the allowance, 5276 -> 5175 (101) adds 36.
+            var engine = Engine();
+            engine.Update(0, 1);
+
+            var events = Signals.Run(engine, Signals.Samples(5, 5428, 5420, 5407, 5385, 5350, 5276, 5175, 5046, 4892, 0));
+
+            Assert.Equal((0, TriggerEvent.Contact), events[0]);
+            Assert.Equal((30, TriggerEvent.FastRelease), events[1]);
+        }
+
+        [Theory]
+        [InlineData(500)]
+        [InlineData(750)]
+        [InlineData(1000)]
+        public void LightDragWithNoiseSampledEvery5MsDoesNotRelease(double level)
+        {
+            // Light drag: 10% dips over 300 ms, 1.5% tremor at 9 Hz, +-10 noise (sigma 5.8; the 5 ms recording shows ~3-5
+            // on steady holds) per 5 ms sample. The fixed part of the allowance (1.5 units/ms, 7.5 per sample) carries
+            // this; the 9 ms era default (0.5 units/ms, 2.5 per 5 ms sample) cut out here. At +-15 some still cut out.
+            var engine = Engine();
+            Signals.Run(engine, Signals.Ramp(0, level, 40));
+
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(level, 8000, 0.10, 300, 0.015, 10, seed: 3), 5));
+
+            Assert.Empty(events);
+            Assert.True(engine.Pressed);
+
+            var old = Engine(new TriggerSettings { FastFallSpeed = 0.5, FastFallPercent = 0.25 });
+            Signals.Run(old, Signals.Ramp(0, level, 40));
+            Assert.Contains(Signals.Run(old, Signals.SampleAndHold(Signals.Drag(level, 8000, 0.10, 300, 0.015, 10, seed: 3), 5)),
+                e => e.Event == TriggerEvent.FastRelease);
+        }
+
+        [Fact]
+        public void DropoutFromMaxPressureToZeroIsIgnored()
+        {
+            // Pressed at max, one 5 ms sample of 0, back at max: the zero is a sensor dropout, the tip stays down.
+            var engine = Engine();
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(5, 6000, 7500, 8191, 8191));
+
+            var events = Signals.Run(engine, Signals.Samples(5, 0, 8191, 8191, 8100, 8191));
+
+            Assert.Empty(events);
+            Assert.True(engine.Pressed);
+            Assert.Equal(0, engine.FallExcess);
+        }
+
+        [Fact]
+        public void DropoutReturningBelowMaxIsJudgedFromMax()
+        {
+            // Max, 0, then 3000: the zero is ignored and the fall 8191 -> 3000 releases like any fast fall.
+            var engine = Engine();
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(5, 7000, 8191));
+
+            var events = Signals.Run(engine, Signals.Samples(5, 0, 3000, 3000));
+
+            Assert.Equal((5, TriggerEvent.FastRelease), events.Single());
+        }
+
+        [Fact]
+        public void LiftStraightFromMaxPressureReleasesAfterDropoutTime()
+        {
+            var engine = Engine();
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(5, 7000, 8191));
+
+            var events = Signals.Run(engine, Signals.Samples(5, 0, 0, 0, 0));
+            Assert.Equal((12, TriggerEvent.Lift), events.Single());
+
+            var off = Engine(new TriggerSettings { DropoutTime = 0 });
+            off.Update(0, 1);
+            Signals.Run(off, Signals.Samples(5, 7000, 8191));
+            Assert.Equal((0, TriggerEvent.Lift), Signals.Run(off, Signals.Samples(5, 0, 0)).Single());
+        }
+
+        [Fact]
+        public void LiftFromBelowMaxPressureIsNotDelayed()
+        {
+            var engine = Engine();
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(5, 7000, 8169));
+
+            Assert.Equal(TriggerEvent.Lift, engine.Update(0, 1));
         }
 
         [Fact]

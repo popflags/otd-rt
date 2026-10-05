@@ -8,8 +8,9 @@ useful from them is summarized below.
 ## Owner and goal
 
 - Owner (GitHub `popflags`) plays rhythm/aim games with a **Wacom PTK-670 (Intuos Pro M, 2025)** running
-  **custom firmware at 1000 Hz** (1000 reports/s, but **pressure is sampled only every ~9 ms**: each value is
-  repeated for ~9 reports; measured in `recordings/play-ptk670-20261001.csv`), on OpenTabletDriver (OTD) **0.6.7** (latest release; plugin targets it). Develops on Linux (CachyOS) locally
+  **custom firmware at 1000 Hz** (1000 reports/s, but **pressure is sampled only every 5 ms** since a firmware
+  change on 2026-10-05: each value is repeated for 5 reports, `recordings/play-ptk670-5ms-20261005.csv`; before
+  that every ~9 ms, `recordings/play-ptk670-20261001.csv`), on OpenTabletDriver (OTD) **0.6.7** (latest release; plugin targets it). Develops on Linux (CachyOS) locally
   and on Windows through Claude Code in the cloud (no IDE on Windows).
 - Requirements, in the owner's words: initial press as fast as possible, release as fast as possible,
   taps as fast as possible, "compromise as little as possible". **Drags must never cut out** (tip held
@@ -26,6 +27,7 @@ src/RapidTrigger/RapidTriggerFilter.cs   OTD 0.6 filter: properties, timing, out
 src/RapidTrigger/DiagnosticsRecorder.cs  per-report CSV via Channel + background thread
 src/AnglePreservingSensitivity/          separate plugin DLL, own version: relative-mode direction-preserving X:Y speed
 tools/RtTool/                            `rt` CLI: replay + calibrate; compiles TriggerEngine.cs via <Compile Link>
+tools/Sweep/                             `sweep` CLI: scores settings grids on recordings + synthetic signals (how defaults are chosen)
 tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1000 Hz data)
 tests/RapidTrigger.Tests/                xunit tests on synthetic 1000 Hz signals (Signals.cs)
 recordings/                              real diagnostics CSVs from the tablet (commit them here)
@@ -42,6 +44,7 @@ dotnet test tests/RapidTrigger.Tests
 dotnet tools/RtTool/bin/Release/net8.0/rt.dll replay <csv>... [--set Name=Value]... [--events]
 dotnet tools/RtTool/bin/Release/net8.0/rt.dll calibrate --drag <csv>... --tap <csv>... [--margin 0.35]
 python3 tools/synth_logs.py /tmp/syn                 # synthetic logs for quick experiments
+dotnet run -c Release --project tools/Sweep -- "FastFallSpeed=1|1.5|2,FastFallPercent=0.2|0.22"   # score a grid
 ```
 
 In cloud sessions `scripts/cloud-setup.sh` installs the SDK (apt `dotnet-sdk-8.0`, falling back to
@@ -107,7 +110,11 @@ Per report: `Update(rawPressure, elapsedMs)`.
     dropped if the pen lifts first.
   - Otherwise *Rearm*: press when pressure ≥ trough + `ActivationDistance`.
 - **Pressed:** whichever detector fires first releases.
-  1. **Lift:** pressure ≤ `LiftThreshold`.
+  1. **Lift:** pressure ≤ `LiftThreshold`. Exception (2.5.0, owner request "just in case"): a fall straight
+     from ≥ `PhantomContactPressure` (8191) to ≤ lift is held back `DropoutTime` (12 ms; still reported as
+     pressed). If pressure comes back above lift in that time the zero is ignored (previous pressure stays at
+     the pre-drop level, so 8191 → 0 → 3000 is judged as 8191 → 3000); otherwise it releases as Lift. None of
+     the three recordings has a pressed stroke falling straight from 8191 to 0, nor a max → 0 → max dropout.
   2. **FastRelease (CUSUM):** on each report whose pressure *differs* from the previous one,
      `FallExcess = max(0, FallExcess + (prev − p) − (FastFallSpeed + FastFallPercent%·prev)·dt)`, with dt = time since the previous
      change (repeated values are not new samples; before 2026-10-01 dt was the report interval, which on the
@@ -118,11 +125,43 @@ Per report: `Update(rawPressure, elapsedMs)`.
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
-- Defaults (2.3.0): Contact 4, Lift 2, Activation 20 + 0.5 %, FastFallSpeed 0.5 raw/ms, FastFallPercent 0.25 %/ms,
-  FastReleaseDistance 10,
+- Defaults (2.5.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 12 ms, Activation 20 + 0.5 %,
+  FastFallSpeed 1.5 raw/ms, FastFallPercent 0.22 %/ms, FastReleaseDistance 10,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**5 ms firmware (2026-10-05), `recordings/play-ptk670-5ms-20261005.csv`:** 84 s, recorded with 2.3.x/2.4.0
+defaults. Pressure changes every 5 ms (1000 reports/s). 106 strokes, all lifted: ~93 taps, 13 holds ≥ 300 ms
+(up to 8191). Two phantom 8191 samples, both right *before* a contact (0 → 8191 → 1966 at 25.14 s, 8191 → 0 for
+6 ms → 1495 at 81.11 s); 2.3.1's filter handles both. One landing-wobble re-press (stroke at 62.4 s,
+3217 → 3134 → 3084 → 3128), the same kind as the accepted ones on the newtip log. Steady-hold noise σ ≈ 3–5
+per sample at 5000–8191 (second differences, repeated values skipped); light-pressure noise still unknown.
+- What 5 ms sampling changes: the allowance is per ms, so drag/tap *speeds* transfer unchanged, but sensor noise
+  is per sample and the per-sample allowance shrank to 5/9. The 2.3.0 defaults (0.5 + 0.25 %) give 2.5 + 0.25 %·p
+  per sample; synthetic light drags (500–1000, 10 % dips, 1.5 % tremor, `tools/Sweep`) went from 9 cut-outs at
+  9 ms to 89 at 5 ms (±10 and ±15 noise combined).
+- Scored with `tools/Sweep` (columns explained in its header). 2.3.0 vs **2.5.0 (1.5 / 0.22 / 10)**:
+
+| | 2.3.0 (0.5 / 0.25 / 10) | **2.5.0 (1.5 / 0.22 / 10)** | 3 / 0.2 / 10 | 3 / 0.25 / 10 |
+|---|---|---|---|---|
+| 5 ms log: tap / hold lead before lift, mean ms | 43.5 / 87.9 | 43.5 / 87.9 | 43.0 / 87.9 | 41.8 / 85.0 |
+| 5 ms log: hold margin; old 9 ms log margin | 1.52; 1.42 | 1.46; 1.34 | 1.51; 1.35 | 1.79; 1.61 |
+| synthetic no-lift re-presses caught (of 1216, 5 ms), delay | 1101, 8.4 ms | 1101, 8.3 ms | 1079, 8.2 ms | 1015, 8.0 ms |
+| light drags 3×8 s, ±10 noise: cut-outs | 7 | 0 | 0 | 0 |
+| light drags, ±15 noise | 161 | 61 | 3 | 1 |
+| medium drags 2×8 s (2500/5000, 15 % dips, 2 % tremor), ±5 / ±10 / ±15 | 1 / 8 / 18 | 3 / 8 / 16 | 1 / 5 / 10 | 0 / 0 / 2 |
+
+  Per event vs 2.3.0: the 5 ms log releases 2 strokes one sample earlier and 1 later (55.49 s, light pressure
+  ~3000); the 9 ms logs release 8 and 15 strokes one sample earlier, none later; presses unchanged everywhere.
+  So 2.5.0 is speed-neutral on real data and fixes light drags at realistic noise. The higher fixed part buys
+  light-pressure noise tolerance, the lower percent keeps heavy-hold releases as fast as before.
+  3 / 0.2 / 10 was the first pick (robust to ±15 light noise) but released 12 of 106 real 5 ms strokes one
+  sample (5 ms) later, all at 2300–3800 pressure. 3 / 0.25 is the "steady drags" preset if real drags cut out.
+- Medium synthetic drags at 5 ms (11.5 raw/ms worst-case speed vs 12.5 allowance at 5000) sit at the edge for
+  every speed-neutral setting. **A real 5 ms drag recording (`drag-*.csv`) is the open item.**
+- Phantom Confirm Time 20 ms left as is: phantoms last one sample (5 ms now, 9 ms before), no real contact has
+  started at 8191, so a lower value would gain nothing measurable.
 
 **PTK-670 recording (2026-10-01), `recordings/play-ptk670-20261001.csv`:** 108 s of play recorded with the
 then-defaults (FastReleaseDistance 40, per-report CUSUM). 103 strokes, every one lifted at the end: ≈70 taps
@@ -245,7 +284,8 @@ Findings that shaped it:
   or `play-*` logs where the pen lifts after each tap/hold).
 - *Lead before lift*: ms from each stroke-ending release to pressure ≤ lift threshold (larger = earlier).
   Label-free latency metric for logs where strokes end in a lift. Quantized to the 9 ms sample interval.
-- *Pressure sample interval*: median time between pressure changes while pressed (9 ms on the PTK-670).
+- *Pressure sample interval*: median time between pressure changes while pressed (5 ms on the PTK-670 since
+  2026-10-05, 9 ms before).
 - *Missed releases* (tap logs): zigzag swings of ≥ max(400, 35% of peak) whose peak was pressed but which
   never released before the trough. A heuristic: on drag logs it counts dips as "taps".
 - *Noise σ*: 1.4826·median|2nd difference|/√6 over samples > 50, repeated values skipped. On sample-and-hold
@@ -295,6 +335,7 @@ there the plugin degrades towards the plain per-axis ratio (it cannot do worse t
 - `HoverDistance` (IntuosV3 byte 13) could hint at an imminent contact, but any prediction risks false presses.
 - Per-pressure-band thresholds if real drags show noise growing with force (on the play log a pressure-
   proportional fall allowance gained only ~1 ms; see above).
+- Record real drags on the 5 ms firmware and re-run `tools/Sweep` with them (add a drag column).
 - If the firmware starts sampling pressure every ms, the 2.2.0 defaults are far too sensitive (synthetic 1 kHz
   drags: 238 cut-outs); FastFallSpeed 20 / FastFallPercent 0 / FastReleaseDistance 40 was fine there. `rt replay` prints the sample interval.
 
