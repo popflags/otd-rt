@@ -9,7 +9,10 @@ syn_tap.csv:  60 rapid taps without lifting (random 800-2000 trough, 3000-6000 p
 These are made up, harsher than typical drags on purpose. Real recordings from the tablet
 (recordings/) always take priority. Output is in the plugin's diagnostics CSV format.
 
-Usage: python3 tools/synth_logs.py [output_dir]
+--sample-ms N holds each pressure value for N reports, like the PTK-670 on 1000 Hz firmware, which
+sends 1000 reports/s but samples pressure only every ~9 ms. Default 1 (a new value every report).
+
+Usage: python3 tools/synth_logs.py [output_dir] [--sample-ms N]
 """
 import math
 import os
@@ -17,7 +20,8 @@ import random
 import sys
 
 
-def write(path, values):
+def write(path, values, sample_ms=1):
+    values = [values[i - i % sample_ms] for i in range(len(values))]
     with open(path, "w") as f:
         f.write("t_ms,raw,pressed,event,anchor,hold_reference,release_distance,fall_excess\n")
         for i, v in enumerate(values):
@@ -41,7 +45,13 @@ def drag(level, ms, dip_fraction, dip_ms, tremor, noise, seed, tremor_hz=9):
 
 
 def main():
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+    args = sys.argv[1:]
+    sample_ms = 1
+    if "--sample-ms" in args:
+        k = args.index("--sample-ms")
+        sample_ms = int(args[k + 1])
+        del args[k:k + 2]
+    out_dir = args[0] if args else "."
     os.makedirs(out_dir, exist_ok=True)
 
     d = [0] * 50
@@ -49,7 +59,7 @@ def main():
                                                               (7000, .20, 500, .03), (1200, .35, 250, .02)]):
         d += ramp(0, level, 60) + drag(level, 4000, dip_fraction, dip_ms, tremor, 15, k)
         d += ramp(level, 0, max(10, int(level / 50))) + [0] * 200
-    write(os.path.join(out_dir, "syn_drag.csv"), d)
+    write(os.path.join(out_dir, "syn_drag.csv"), d, sample_ms)
 
     t = [0] * 50 + ramp(0, 1500, 20)
     r = random.Random(9)
@@ -57,7 +67,7 @@ def main():
         hi, lo, n = r.uniform(3000, 6000), r.uniform(800, 2000), int(r.uniform(50, 90))
         t += [lo + (hi - lo) * 0.5 * (1 - math.cos(2 * math.pi * i / n)) + (r.random() * 2 - 1) * 15 for i in range(n)]
     t += ramp(1500, 0, 30) + [0] * 100
-    write(os.path.join(out_dir, "syn_tap.csv"), t)
+    write(os.path.join(out_dir, "syn_tap.csv"), t, sample_ms)
 
     print(f"wrote {out_dir}/syn_drag.csv ({len(d)} samples) and {out_dir}/syn_tap.csv ({len(t)} samples)")
 

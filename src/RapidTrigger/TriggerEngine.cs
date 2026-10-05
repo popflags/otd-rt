@@ -30,24 +30,59 @@ namespace RapidTrigger
         /// <summary>Pressure that presses the tip when coming from a lifted pen. Lowest = fastest first press.</summary>
         public double ContactThreshold { get; set; } = 4;
 
+        /// <summary>
+        /// A contact whose first report is at or above this pressure waits PhantomConfirmTime before pressing, and is
+        /// dropped if the pen lifts in the meantime. The PTK-670 sometimes reports a single sample at exactly max
+        /// pressure (8191) ~40 ms after a lift; no real contact in the recordings started above 7000. 0 = off.
+        /// </summary>
+        public double PhantomContactPressure { get; set; } = 8191;
+
+        /// <summary>How long a contact that starts at PhantomContactPressure must last before it presses, in ms.</summary>
+        public double PhantomConfirmTime { get; set; } = 20;
+
+        /// <summary>
+        /// While pressed, a drop straight from PhantomContactPressure (max) to the lift threshold is held back this long,
+        /// in ms. If pressure comes back above the lift threshold in that time, the drop is ignored as a sensor dropout
+        /// (max, 0, max); otherwise it releases as a lift. Costs only lifts straight from max pressure to zero, which
+        /// no pressed stroke in the recordings did. 0 = off.
+        /// </summary>
+        public double DropoutTime { get; set; } = 12;
+
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
 
-        /// <summary>Rise above the lowest pressure since the last release that presses again without lifting.</summary>
-        public double ActivationDistance { get; set; } = 40;
-
         /// <summary>
-        /// Fast-fall detector: falls faster than this (raw units per ms) are faster than anything a drag does.
-        /// Only the part of each report's fall above this speed counts towards FastReleaseDistance.
-        /// 0 = detector off.
+        /// Rise above the lowest pressure since the last release that presses again without lifting
+        /// (fixed part; ActivationPercent adds a part that grows with that lowest pressure).
         /// </summary>
-        public double FastFallSpeed { get; set; } = 20;
+        public double ActivationDistance { get; set; } = 20;
 
         /// <summary>
-        /// Fast-fall detector: release once the fall in excess of FastFallSpeed adds up to this (a one-sided CUSUM).
+        /// Part of the re-press rise that grows with pressure, in % of the lowest pressure since the release. Wobble
+        /// grows with force: on the PTK-670 recording a release from a 7000 hold bumped back up by 39 before lifting.
+        /// </summary>
+        public double ActivationPercent { get; set; } = 0.5;
+
+        /// <summary>
+        /// Fast-fall detector, drag allowance: falls slower than FastFallSpeed + FastFallPercent% of the pressure
+        /// (raw units per ms) are what a drag or hold can do. Only the part of each pressure sample's fall above the
+        /// allowance (times the time since the previous sample) counts towards FastReleaseDistance.
+        /// Both 0 = detector off.
+        /// </summary>
+        public double FastFallSpeed { get; set; } = 2;
+
+        /// <summary>
+        /// Fast-fall detector: the part of the drag allowance that grows with pressure, in % of the current pressure
+        /// per ms. Hand wobble grows with force: on the PTK-670 recording, hold dips at 7000-8191 fell up to
+        /// 13 raw/ms, while re-presses without lifting at lighter pressure need a smaller allowance to release.
+        /// </summary>
+        public double FastFallPercent { get; set; } = 0.19;
+
+        /// <summary>
+        /// Fast-fall detector: release once the fall in excess of the allowance adds up to this (a one-sided CUSUM).
         /// Smaller = earlier tap releases; must stay above what sensor noise can add up to.
         /// </summary>
-        public double FastReleaseDistance { get; set; } = 40;
+        public double FastReleaseDistance { get; set; } = 10;
 
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
@@ -94,7 +129,17 @@ namespace RapidTrigger
         // Pressed: hold reference (drifting peak). Released: trough (lowest pressure since release).
         private double _anchor;
         private double _previousPressure;
+        private double _sinceChangeMs;
         private bool _fresh = true;
+
+        // Time a suspected phantom contact has lasted; negative = none pending.
+        private double _phantomMs = -1;
+
+        // Time since a suspected dropout (max pressure straight to zero) started; negative = none pending.
+        private double _dropoutMs = -1;
+
+        // Report time held back while a dropout was pending, handed to the state machine once it resolves.
+        private double _deferredMs;
 
         public TriggerEngine(TriggerSettings settings)
         {
@@ -114,7 +159,7 @@ namespace RapidTrigger
         /// <summary>Hold reference on the last pressed report (kept after a release for diagnostics).</summary>
         public double HoldReference { get; private set; }
 
-        /// <summary>Fast-fall detector state: accumulated fall in excess of FastFallSpeed.</summary>
+        /// <summary>Fast-fall detector state: accumulated fall in excess of the drag allowance.</summary>
         public double FallExcess { get; private set; }
 
         /// <summary>Time since the current press started, in milliseconds.</summary>
@@ -125,7 +170,11 @@ namespace RapidTrigger
             Pressed = false;
             _anchor = 0;
             _previousPressure = 0;
+            _sinceChangeMs = 0;
             _fresh = true;
+            _phantomMs = -1;
+            _dropoutMs = -1;
+            _deferredMs = 0;
             CurrentReleaseDistance = 0;
             HoldReference = 0;
             FallExcess = 0;
@@ -138,10 +187,54 @@ namespace RapidTrigger
                 elapsedMs = 0;
 
             double p = pressure;
+
+            if (Pressed && HoldDropout(p, ref elapsedMs))
+                return TriggerEvent.None;
+
             double previous = _previousPressure;
             _previousPressure = p;
 
-            return Pressed ? UpdatePressed(p, previous, elapsedMs) : UpdateReleased(p, previous, elapsedMs);
+            // Some tablets sample pressure slower than they send reports and repeat the last value in between
+            // (the PTK-670 on 1000 Hz firmware: a new pressure sample every 5 reports, ~9 on older firmware). A change then covers all the
+            // time since the previous change, not just the last report interval.
+            _sinceChangeMs += elapsedMs;
+            double sampleMs = _sinceChangeMs;
+            if (p != previous)
+                _sinceChangeMs = 0;
+
+            return Pressed ? UpdatePressed(p, previous, elapsedMs, sampleMs) : UpdateReleased(p, previous, elapsedMs);
+        }
+
+        /// <summary>
+        /// Holds back a fall straight from max pressure to zero until it has lasted DropoutTime. Returns true while it
+        /// is held back. The previous pressure stays at the level before the drop, so if pressure comes back the zero
+        /// never happened; once it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
+        /// </summary>
+        private bool HoldDropout(double p, ref double elapsedMs)
+        {
+            var s = _settings;
+            bool zero = p <= s.LiftThreshold;
+
+            if (_dropoutMs < 0)
+            {
+                if (!zero || s.DropoutTime <= 0 || s.PhantomContactPressure <= 0 || _previousPressure < s.PhantomContactPressure)
+                    return false;
+                _dropoutMs = 0;
+                _deferredMs = elapsedMs;
+                return true;
+            }
+
+            if (zero && _dropoutMs + elapsedMs < s.DropoutTime)
+            {
+                _dropoutMs += elapsedMs;
+                _deferredMs += elapsedMs;
+                return true;
+            }
+
+            elapsedMs += _deferredMs;
+            _dropoutMs = -1;
+            _deferredMs = 0;
+            return false;
         }
 
         private TriggerEvent UpdateReleased(double p, double previous, double elapsedMs)
@@ -159,10 +252,25 @@ namespace RapidTrigger
 
             if (_fresh)
             {
-                if (p >= s.ContactThreshold && p > s.LiftThreshold)
-                    return Press(p, TriggerEvent.Contact);
+                if (!(p >= s.ContactThreshold && p > s.LiftThreshold))
+                {
+                    _phantomMs = -1;
+                    return TriggerEvent.None;
+                }
+
+                // A contact that starts at max pressure is held back until it has lasted long enough to be real.
+                // It presses at once if pressure moves below the phantom level, and is dropped if the pen lifts.
+                if (s.PhantomContactPressure > 0 && p >= s.PhantomContactPressure)
+                {
+                    _phantomMs = _phantomMs < 0 ? 0 : _phantomMs + elapsedMs;
+                    if (_phantomMs < s.PhantomConfirmTime)
+                        return TriggerEvent.None;
+                }
+
+                _phantomMs = -1;
+                return Press(p, TriggerEvent.Contact);
             }
-            else if (p - _anchor >= s.ActivationDistance)
+            else if (p - _anchor >= s.ActivationDistance + s.ActivationPercent * 0.01 * _anchor)
             {
                 return Press(p, TriggerEvent.Rearm);
             }
@@ -170,18 +278,23 @@ namespace RapidTrigger
             return TriggerEvent.None;
         }
 
-        private TriggerEvent UpdatePressed(double p, double previous, double elapsedMs)
+        private TriggerEvent UpdatePressed(double p, double previous, double elapsedMs, double sampleMs)
         {
             var s = _settings;
             HeldTime += elapsedMs;
             double multiplier = HoldMultiplier(HeldTime);
 
-            // Fast path: one-sided CUSUM. Each report adds its fall minus what a drag could fall in that time;
-            // rises and slow falls drain it back to zero.
+            // Fast path: one-sided CUSUM. Each new pressure sample adds its fall minus what a drag could fall since the
+            // previous sample; rises and slow falls drain it back to zero. Repeated values are not new samples.
+            bool fastDetector = s.FastFallSpeed > 0 || s.FastFallPercent > 0;
             bool fastFallBuilding = false;
-            if (s.FastFallSpeed > 0)
+            if (fastDetector)
             {
-                FallExcess = Math.Max(0, FallExcess + (previous - p) - s.FastFallSpeed * elapsedMs);
+                if (p != previous)
+                {
+                    double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
+                    FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * sampleMs);
+                }
                 fastFallBuilding = FallExcess > 0;
             }
 
@@ -197,7 +310,7 @@ namespace RapidTrigger
 
             if (p <= s.LiftThreshold)
                 return Release(p, TriggerEvent.Lift);
-            if (s.FastFallSpeed > 0 && FallExcess >= s.FastReleaseDistance * multiplier)
+            if (fastDetector && FallExcess >= s.FastReleaseDistance * multiplier)
                 return Release(p, TriggerEvent.FastRelease);
             if (_anchor - p >= CurrentReleaseDistance)
                 return Release(p, TriggerEvent.Release);

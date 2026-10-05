@@ -70,13 +70,18 @@ namespace RapidTrigger
             var settings = new TriggerSettings
             {
                 ContactThreshold = ContactThreshold,
+                PhantomContactPressure = PhantomContactPressure,
+                PhantomConfirmTime = PhantomConfirmTime,
+                DropoutTime = DropoutTime,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
+                ActivationPercent = ActivationPercent,
                 ReleaseDistance = ReleaseDistance,
                 ReleaseRatio = ReleaseRatio,
                 MaxReleaseDistance = MaxReleaseDistance,
                 DriftTimeConstant = DriftTimeConstant,
                 FastFallSpeed = FastFallSpeed,
+                FastFallPercent = FastFallPercent,
                 FastReleaseDistance = FastReleaseDistance,
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
@@ -113,25 +118,51 @@ namespace RapidTrigger
             "Lower = earlier first press. Must stay above any pressure the pen reports while hovering.")]
         public double ContactThreshold { set; get; } = 4;
 
+        [Property("Phantom Contact Pressure"), DefaultPropertyValue(8191.0), Unit("raw"), ToolTip(
+            "A contact whose first report is at or above this pressure must last Phantom Confirm Time before it presses.\n" +
+            "Filters the single max-pressure samples the PTK-670 sometimes reports just after a lift. 0 = off.")]
+        public double PhantomContactPressure { set; get; } = 8191;
+
+        [Property("Phantom Confirm Time"), DefaultPropertyValue(20.0), Unit("ms"), ToolTip(
+            "How long a contact that starts at Phantom Contact Pressure must last before it presses.")]
+        public double PhantomConfirmTime { set; get; } = 20;
+
+        [Property("Dropout Time"), DefaultPropertyValue(12.0), Unit("ms"), ToolTip(
+            "While pressed, a drop straight from Phantom Contact Pressure (max) to zero is held back this long.\n" +
+            "If pressure comes back in that time, the zero is ignored as a sensor dropout and the tip stays down.\n" +
+            "Only delays lifts straight from max pressure to zero. 0 = off.")]
+        public double DropoutTime { set; get; } = 12;
+
         [Property("Lift Threshold"), DefaultPropertyValue(2.0), Unit("raw"), ToolTip(
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]
         public double LiftThreshold { set; get; } = 2;
 
-        [Property("Activation Distance"), DefaultPropertyValue(40.0), Unit("raw"), ToolTip(
-            "Rapid re-press: how far pressure must rise above its lowest point since the last release.\n" +
-            "Keep it above the pressure noise (rt replay prints a noise estimate).")]
-        public double ActivationDistance { set; get; } = 40;
+        [Property("Activation Distance"), DefaultPropertyValue(20.0), Unit("raw"), ToolTip(
+            "Rapid re-press: how far pressure must rise above its lowest point since the last release (fixed part).\n" +
+            "Keep the total above the pressure noise. Lower = earlier re-presses, more risk of double clicks.")]
+        public double ActivationDistance { set; get; } = 20;
 
-        [Property("Fast Fall Speed"), DefaultPropertyValue(20.0), Unit("raw/ms"), ToolTip(
-            "Fast release detector: the fastest pressure fall a drag produces. Only the part of each report's\n" +
-            "fall above this speed counts towards Fast Release Distance, so drag dips never add up.\n" +
-            "Higher = steadier drags, later tap releases. 0 = detector off.")]
-        public double FastFallSpeed { set; get; } = 20;
+        [Property("Activation Percent"), DefaultPropertyValue(0.5), Unit("%"), ToolTip(
+            "Rapid re-press: part of the required rise that grows with pressure, in % of the lowest point.\n" +
+            "Keeps wobble on heavy releases from re-pressing while light re-presses stay quick.")]
+        public double ActivationPercent { set; get; } = 0.5;
 
-        [Property("Fast Release Distance"), DefaultPropertyValue(40.0), Unit("raw"), ToolTip(
-            "Fast release detector: release once the fall in excess of Fast Fall Speed adds up to this.\n" +
-            "Lower = earlier tap releases. Keep it well above the pressure noise.")]
-        public double FastReleaseDistance { set; get; } = 40;
+        [Property("Fast Fall Speed"), DefaultPropertyValue(2.0), Unit("raw/ms"), ToolTip(
+            "Fast release detector: fixed part of the drag allowance. Falls slower than\n" +
+            "Fast Fall Speed + Fast Fall Percent of the pressure are what a drag or hold can do; only the part of each\n" +
+            "pressure sample's fall above it counts towards Fast Release Distance.\n" +
+            "Higher = steadier drags, later releases. Both 0 = detector off.")]
+        public double FastFallSpeed { set; get; } = 2;
+
+        [Property("Fast Fall Percent"), DefaultPropertyValue(0.19), Unit("%/ms"), ToolTip(
+            "Fast release detector: part of the drag allowance that grows with pressure (hand wobble grows with force).\n" +
+            "Higher = steadier heavy holds, later releases and missed shallow re-presses without lifting.")]
+        public double FastFallPercent { set; get; } = 0.19;
+
+        [Property("Fast Release Distance"), DefaultPropertyValue(10.0), Unit("raw"), ToolTip(
+            "Fast release detector: release once the fall in excess of the drag allowance adds up to this.\n" +
+            "Lower = earlier releases. Keep it above the pressure noise (>= 40 if pressure changes every report).")]
+        public double FastReleaseDistance { set; get; } = 10;
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +

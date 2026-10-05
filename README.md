@@ -1,7 +1,7 @@
 # Rapid Trigger for OpenTabletDriver
 
 Rapid trigger for the pen tip on OpenTabletDriver 0.6.x (built against 0.6.7), tuned for high report rate tablets
-(developed on a Wacom PTK-670 running at 1000 Hz). Taps press and release as early as the pressure
+(developed on a Wacom PTK-670 sending 1000 reports/s, with a new pressure sample every 5 ms on current firmware, ~9 ms before). Taps press and release as early as the pressure
 signal allows, while drags stay held through normal pressure wobble.
 
 > Rapid trigger can trip anti-cheats or break game rules. Use at your own risk.
@@ -12,22 +12,31 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
 
 **Press**
 - *Contact*: from a lifted pen, the first report at or above **Contact Threshold** presses. Nothing
-  is predicted or filtered, so the first press is the first report that shows contact.
-- *Re-press without lifting*: pressure rising **Activation Distance** above its lowest point since
-  the last release.
+  is predicted or filtered, so the first press is the first report that shows contact. The one
+  exception: a contact that *starts* at max pressure (**Phantom Contact Pressure**) must last
+  **Phantom Confirm Time** first. The PTK-670 sometimes reports a single 8191 sample ~40 ms after a
+  lift; no real contact in the recordings started above 7000.
+- *Re-press without lifting*: pressure rising **Activation Distance** + **Activation Percent** of
+  its lowest point since the last release above that lowest point. The percentage keeps wobble on
+  heavy releases from double-clicking while light re-presses stay quick.
 
 **Release**: two detectors run side by side, and whichever fires first releases.
-- *Fast-fall detector (CUSUM)*: each report adds its pressure fall minus what a drag could fall in
-  that time (**Fast Fall Speed** × elapsed ms). Rises and slow falls drain it back to zero. It
-  releases once the excess reaches **Fast Release Distance**. Drag dips are slower than Fast Fall
-  Speed, so they never add up. A real release starts counting the moment it gets faster than any
+- *Fast-fall detector (CUSUM)*: each new pressure sample adds its fall minus what a drag could fall
+  since the previous sample: (**Fast Fall Speed** + **Fast Fall Percent** of the pressure) × elapsed ms.
+  The allowance grows with pressure because hand wobble grows with force, so heavy holds stay down
+  while lighter re-presses without lifting still release. Reports that repeat the last pressure value
+  are not new samples: the PTK-670 on 1000 Hz firmware repeats each value for 5 reports (~9 on older firmware). Rises and
+  slow falls drain it back to zero. It releases once the excess reaches **Fast Release Distance**.
+  Drag dips are slower than the allowance, so they never add up. A real release starts counting the moment it gets faster than any
   drag, with no smoothing lag. This is Page's CUSUM change detector, the standard quickest-detection
   method for a change in slope.
 - *Slow path*: falling **Release Distance** below a hold reference. The reference jumps to new peaks
   instantly and drifts toward the current pressure with **Drift Time Constant**. Slow easing off
-  during a drag is absorbed, while deliberate releases that are slower than Fast Fall Speed are still
+  during a drag is absorbed, while deliberate releases that are slower than the allowance are still
   caught. The reference stops drifting while a fast fall is building up.
-- *Lift*: pressure at or below **Lift Threshold** always releases.
+- *Lift*: pressure at or below **Lift Threshold** always releases. One exception: a drop straight from
+  max pressure (**Phantom Contact Pressure**) to zero waits **Dropout Time**, and is ignored if pressure
+  comes back in that time (a sensor dropout: max, 0, max).
 
 While pressed, the plugin reports **full pressure** (unless *Preserve Pressure* is on). The tip
 binding therefore fires on the very first pressed report, whatever the tip threshold in the Bindings
@@ -74,8 +83,14 @@ Restart OpenTabletDriver. Then, in the Filters tab:
 
 ## Tuning: record, then calibrate
 
-Defaults are a starting point. They come from replaying an old 300 Hz log and synthetic 1000 Hz
-drags and taps; your hand, nib and firmware decide the real numbers.
+Defaults are a starting point. They come from a 108 s gameplay recording on the PTK-670 (taps and
+~600 ms holds, `recordings/`), an old 300 Hz log and synthetic drags and taps; your hand, nib and
+firmware decide the real numbers. The defaults lean towards speed: fast releases and shallow
+re-presses without lifting, at the cost of harsh drags (fast 30% dips) possibly cutting out. For
+steadier drags raise Fast Fall Percent (0.3–0.4); if light-pressure drags cut out, raise Fast Fall
+Speed to 1.5. If `rt replay` shows pressure changing every report
+(true 1000 Hz pressure sampling), sensor noise adds up in the fast detector: use Fast Fall Speed 20,
+Fast Fall Percent 0 and Fast Release Distance 40.
 
 1. Enable **Enable Diagnostics**. Each time the filter is applied, it writes
    `~/rapid-trigger-logs/rt-<time>.csv` (Windows: `C:\Users\<you>\rapid-trigger-logs\`).
@@ -91,26 +106,31 @@ drags and taps; your hand, nib and firmware decide the real numbers.
        --drag ~/rapid-trigger-logs/rt-drag.csv --tap ~/rapid-trigger-logs/rt-tap.csv
    ```
 
-   For each drift time constant / fast fall speed pair, it finds the smallest release distances
+   For each drift time constant / fast fall percent pair, it finds the smallest release distances
    with **zero cut-outs** across all drag logs, adds a margin (`--margin`, default 35%), and
    reports how fast taps release and whether any were missed. Then it prints the recommended
    settings.
 5. Enter the settings and turn diagnostics off.
 
 `rt replay <log> [--set Name=Value ...] [--events]` runs any settings over a log. It prints
-presses, releases (fast / distance / lift), release timing from the start of each descent,
-cut-outs (meaningful for drag logs), missed taps (meaningful for tap logs) and a sensor-noise
-estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
+the pressure sample interval, presses, releases (fast / distance / lift), release timing from the
+start of each descent, release lead before the lift (larger = earlier; for strokes that end in a lift),
+cut-outs (meaningful for drag logs, and for any log where every stroke is one press), missed taps
+(meaningful for tap logs) and a sensor-noise estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
 
 ## Settings
 
 | Setting | Default | |
 |---|---|---|
 | Contact Threshold | 4 | First press from the air. Lower = earlier. |
+| Phantom Contact Pressure / Phantom Confirm Time | 8191 / 20 ms | A contact that starts at or above this pressure must last this long to press (filters one-sample max-pressure glitches after a lift). 0 = off. |
+| Dropout Time | 12 ms | While pressed, a drop straight from max pressure to zero waits this long and is ignored if pressure comes back (max, 0, max dropouts). Only delays lifts straight from max to zero. 0 = off. |
 | Lift Threshold | 2 | Always released at or below this. |
-| Activation Distance | 40 | Re-press rise above the trough. Keep ≥ 6× noise sigma (`rt replay` prints it). |
-| Fast Fall Speed | 20 raw/ms | Fastest fall a drag produces. Higher = steadier drags, later taps. 0 = fast detector off. |
-| Fast Release Distance | 40 | Excess fall that releases. Lower = earlier taps. |
+| Activation Distance | 20 | Re-press rise above the trough (fixed part). Keep the total ≥ 6× noise sigma. |
+| Activation Percent | 0.5 % | Part of the re-press rise that grows with the trough pressure (27 at 1500, 55 at 7000). |
+| Fast Fall Speed | 2 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
+| Fast Fall Percent | 0.19 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
+| Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |
@@ -119,10 +139,29 @@ estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
 | Preserve Pressure | off | Pass real pressure instead of full pressure while pressed. |
 | Enable Diagnostics / Diagnostics Directory | off / `~/rapid-trigger-logs` | Per-report CSV for replay and calibration. |
 
+## Angle-Preserving Sensitivity (separate plugin)
+
+`AnglePreservingSensitivity.zip`, a separate DLL in every release, for **relative mode** (Linux "Relative
+Mode" and Windows "VMulti Relative Mode"). A lower vertical sensitivity in OTD (X ≠ Y) also bends
+diagonals: with Y at 72% of X, a 45° stroke comes out at ~36° and circles become ellipses. This plugin
+keeps the slower vertical speed but leaves every movement's direction alone.
+
+1. Install it like Rapid Trigger and enable **Angle-Preserving Sensitivity**. It runs after OTD's
+   transform (post-transform), so its place in the list does not matter.
+2. In the output tab, set the X and Y sensitivity to the **same** value: your horizontal one.
+3. Set **Vertical Speed** to vertical ÷ horizontal sensitivity, e.g. 20.617 / 28.589 = **72.1 %**.
+
+Each report's movement keeps its direction and gets the length an X:Y sensitivity would have given it:
+horizontal unchanged, vertical × Vertical Speed, diagonals in between. It works on each report on its
+own (no smoothing, no history), so it adds no latency. Very slow movements of one or two tablet units
+per report have a coarse direction, so they behave like the per-axis ratio. Do not use it in absolute
+mode: there the post-transform position is a screen position, not a movement.
+
 ## Development
 
 ```
 src/RapidTrigger/         plugin (TriggerEngine.cs has no OpenTabletDriver dependency)
+src/AnglePreservingSensitivity/  separate relative-mode plugin (DirectionalScale.cs is OTD-free)
 tools/RtTool/             replay + calibration CLI, compiles the same TriggerEngine.cs
 tests/RapidTrigger.Tests/ engine tests on synthetic 1000 Hz signals
 tools/synth_logs.py       synthetic drag/tap logs for experiments

@@ -45,15 +45,15 @@ static void PrintUsage()
             cut-outs (meaningful for drag recordings) and a pressure noise estimate.
 
         rt calibrate --drag <log> [--drag <log>]... [--tap <log>]... [--margin 0.35]
-                     [--taus 0,5,10,15,20,30,50] [--fast-falls 0,15,20,30,40] [--set Name=Value]...
+                     [--taus 0,5,10,15,20,30,50] [--fast-percents 0,0.15,0.2,0.25,0.3,0.4] [--set Name=Value]...
             Drag logs: the tip was meant to stay down for the whole drag, only lifting at the end.
             Tap logs:  rapid taps / streams, for measuring release speed.
-            For each drift time constant / fast fall speed pair, finds the smallest release distance with zero cut-outs
+            For each drift time constant / fast fall percent pair (0 = fast detector off), finds the smallest release distance with zero cut-outs
             across all drag logs, adds the margin, and reports release speed. Prints the
             recommended plugin settings.
 
-        Setting names: ContactThreshold, LiftThreshold, ActivationDistance, ReleaseDistance,
-        ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastReleaseDistance, PressDriftTimeConstant,
+        Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
+        ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, PressDriftTimeConstant,
         HoldTime, HoldReleaseMultiplier.
 
         Other options:
@@ -80,12 +80,18 @@ static int Replay(Options o)
 
         Console.WriteLine();
         Console.WriteLine($"== {log.Name}: {log.Count} samples, {log.Duration / 1000:F1} s, median interval {interval:F2} ms ({1000 / interval:F0} Hz)");
+        Console.WriteLine($"   pressure changes every {Analysis.MedianSampleInterval(log):F1} ms (median while pressed)");
         Console.WriteLine($"   sensor noise sigma {noise:F1} -> keep Activation Distance >= {RecommendedActivation(noise):F0}");
         Console.WriteLine($"   presses {result.Presses} (contact {result.Count(TriggerEvent.Contact)}, rearm {result.Count(TriggerEvent.Rearm)}), " +
                           $"releases {result.Count(TriggerEvent.FastRelease) + result.Count(TriggerEvent.Release) + result.Count(TriggerEvent.Lift)} " +
                           $"(fast {result.Count(TriggerEvent.FastRelease)}, distance {result.Count(TriggerEvent.Release)}, lift {result.Count(TriggerEvent.Lift)})");
 
         PrintTimings("   release timing", Analysis.ReleaseTimings(result));
+
+        var leads = Analysis.LeadBeforeLift(result, o.LiftWindow);
+        if (leads.Count > 0)
+            Console.WriteLine($"   release lead before lift (ms, larger = earlier; strokes that end in a lift): p50 {Analysis.Percentile(leads, 0.5):F1}, " +
+                              $"p10 {Analysis.Percentile(leads, 0.1):F1}, mean {leads.Average():F1}");
 
         var cutOuts = Analysis.CutOuts(result, o.LiftWindow);
         Console.WriteLine($"   cut-outs if this was a continuous drag: {cutOuts.Count}");
@@ -117,27 +123,33 @@ static int Calibrate(Options o)
     var baseSettings = o.Settings;
 
     double noise = drags.Concat(taps).Max(Analysis.NoiseSigma);
+    double sampleInterval = drags.Concat(taps).Select(Analysis.MedianSampleInterval).Where(v => !double.IsNaN(v)).DefaultIfEmpty(1).Min();
+    // Light end of the pressures in use: where the pressure-proportional allowance is smallest.
+    double lightPressure = Analysis.Percentile(drags.Concat(taps).SelectMany(l => l.Pressure).Where(v => v > 50).Select(v => (double)v), 0.1);
     double minReleaseDistance = Math.Max(10 * noise, baseSettings.ActivationDistance);
     double activation = Math.Max(baseSettings.ActivationDistance, RecommendedActivation(noise));
 
     Console.WriteLine($"Drag logs: {string.Join(", ", drags.Select(d => d.Name))}");
     Console.WriteLine($"Tap logs:  {(taps.Count == 0 ? "(none - release speed measured on drag ends only)" : string.Join(", ", taps.Select(d => d.Name)))}");
-    Console.WriteLine($"Sensor noise sigma: {noise:F1} -> Activation Distance {activation:F0}, release distance floor {minReleaseDistance:F0}");
+    Console.WriteLine($"Sensor noise sigma: {noise:F1} -> Activation Distance {activation:F0}, release distance floor {minReleaseDistance:F0}; pressure sample interval {sampleInterval:F1} ms");
     Console.WriteLine($"Margin: x{1 + o.Margin:F2} on top of the smallest stable release distance");
     Console.WriteLine();
-    Console.WriteLine("drift ms  fast fall | stable x | used x | rel.dist  ratio    max | drag-end release ms p50/p90 | tap release ms p50/p90 | missed taps");
+    Console.WriteLine("drift ms  fast %/ms | stable x | used x | rel.dist  ratio    max | drag-end release ms p50/p90 | tap release ms p50/p90 | missed taps");
     Console.WriteLine("--------------------+----------+--------+-------------------------+----------------------------+------------------------+------------");
 
     (double Score, TriggerSettings Settings)? best = null;
 
-    var combinations = o.Taus.SelectMany(tau => o.FastFalls.Select(ff => (tau, ff)));
-    foreach (var (tau, fastFall) in combinations)
+    var combinations = o.Taus.SelectMany(tau => o.FastPercents.Select(pct => (tau, pct)));
+    foreach (var (tau, fastPercent) in combinations)
     {
         var tauSettings = baseSettings.Clone();
         tauSettings.DriftTimeConstant = tau;
-        tauSettings.FastFallSpeed = fastFall;
+        tauSettings.FastFallPercent = fastPercent;
+        if (fastPercent == 0)
+            tauSettings.FastFallSpeed = 0;
         tauSettings.ActivationDistance = activation;
-        string label = $"{tau,8:F0}  {(fastFall == 0 ? "off" : fastFall.ToString("F0")),9}";
+        double fastFall = tauSettings.FastFallSpeed;
+        string label = $"{tau,8:F0}  {(fastPercent == 0 ? "off" : fastPercent.ToString("0.###") + "%"),9}";
 
         double? stable = SmallestStableScale(drags, tauSettings, o.LiftWindow);
         if (stable is null)
@@ -153,8 +165,11 @@ static int Calibrate(Options o)
             used *= minReleaseDistance / candidate.ReleaseDistance;
             candidate = Scale(tauSettings, used);
         }
-        // The fast detector integrates noise too: keep it clear of what noise alone can add up to.
-        candidate.FastReleaseDistance = Math.Max(candidate.FastReleaseDistance, 4 * noise);
+        // The fast detector integrates noise too: keep it clear of what noise alone can add up to. Each pressure
+        // sample is first charged the drag allowance for the time since the previous one, which absorbs the noise
+        // when samples are far apart (PTK-670: 5 ms, ~9 ms on older firmware).
+        double allowance = fastFall + tauSettings.FastFallPercent * 0.01 * lightPressure;
+        candidate.FastReleaseDistance = Math.Max(candidate.FastReleaseDistance, 4 * noise - allowance * sampleInterval);
 
         var dragEnd = drags.SelectMany(d => Analysis.ReleaseTimings(Analysis.Replay(d, candidate))).Select(t => t.MsSinceFallStart).ToList();
         var tapTimes = new List<double>();
@@ -253,7 +268,7 @@ namespace RtTool
         public List<string> TapFiles { get; } = new();
         public TriggerSettings Settings { get; } = new();
         public List<double> Taus { get; private set; } = new() { 0, 5, 10, 15, 20, 30, 50 };
-        public List<double> FastFalls { get; private set; } = new() { 0, 15, 20, 30, 40 };
+        public List<double> FastPercents { get; private set; } = new() { 0, 0.15, 0.2, 0.25, 0.3, 0.4 };
         public double Margin { get; private set; } = 0.35;
         public double LiftWindow { get; private set; } = 300;
         public double Rate { get; private set; } = 1000;
@@ -278,8 +293,8 @@ namespace RtTool
                     case "--taus":
                         o.Taus = Next().Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToList();
                         break;
-                    case "--fast-falls":
-                        o.FastFalls = Next().Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToList();
+                    case "--fast-percents":
+                        o.FastPercents = Next().Split(',').Select(v => double.Parse(v, CultureInfo.InvariantCulture)).ToList();
                         break;
                     case "--set":
                         o.ApplySetting(Next());
