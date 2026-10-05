@@ -59,7 +59,7 @@ namespace RapidTrigger
         /// Rise above the lowest pressure since the last release that presses again without lifting
         /// (fixed part; ActivationPercent adds a part that grows with that lowest pressure).
         /// </summary>
-        public double ActivationDistance { get; set; } = 20;
+        public double ActivationDistance { get; set; } = 10;
 
         /// <summary>
         /// Part of the re-press rise that grows with pressure, in % of the lowest pressure since the release. Wobble
@@ -88,6 +88,14 @@ namespace RapidTrigger
         /// </summary>
         public double FastReleaseDistance { get; set; } = 10;
 
+        /// <summary>
+        /// Fast-fall detector: the drag allowance starts at this fraction when the tip presses and ramps linearly to the
+        /// full allowance over HoldTime. Taps end before holds start dipping, so they release earlier, while holds and drags
+        /// get the full allowance once they last. 1 = off. On the 5 ms recordings 0.5 / 150 ms cut no real hold; the cost is
+        /// slightly more double clicks on landing bounces right after contact.
+        /// </summary>
+        public double TapAllowance { get; set; } = 0.5;
+
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
 
@@ -107,7 +115,7 @@ namespace RapidTrigger
         /// <summary>Same idea on the press side: the trough creeps up after slow rises. 0 = off (fastest re-press).</summary>
         public double PressDriftTimeConstant { get; set; } = 0;
 
-        /// <summary>Time over which the release distances ramp up to HoldReleaseMultiplier while pressed.</summary>
+        /// <summary>Time over which TapAllowance ramps to the full allowance and the release distances to HoldReleaseMultiplier.</summary>
         public double HoldTime { get; set; } = 150;
 
         /// <summary>Release distance multiplier (both paths) reached after HoldTime. 1 = off.</summary>
@@ -298,6 +306,8 @@ namespace RapidTrigger
                 if (p != previous)
                 {
                     double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
+                    if (s.TapAllowance != 1 && s.HoldTime > 0 && HeldTime < s.HoldTime)
+                        allowance *= s.TapAllowance + (1 - s.TapAllowance) * HeldTime / s.HoldTime;
                     FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * sampleMs);
                 }
                 fastFallBuilding = FallExcess > 0;

@@ -84,6 +84,7 @@ namespace RapidTrigger
                 FastFallSpeed = FastFallSpeed,
                 FastFallPercent = FastFallPercent,
                 FastReleaseDistance = FastReleaseDistance,
+                TapAllowance = TapAllowance,
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
                 HoldReleaseMultiplier = HoldReleaseMultiplier,
@@ -143,10 +144,10 @@ namespace RapidTrigger
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]
         public double LiftThreshold { set; get; } = 2;
 
-        [Property("Activation Distance"), DefaultPropertyValue(20.0), Unit("raw"), ToolTip(
+        [Property("Activation Distance"), DefaultPropertyValue(10.0), Unit("raw"), ToolTip(
             "Rapid re-press: how far pressure must rise above its lowest point since the last release (fixed part).\n" +
             "Keep the total above the pressure noise. Lower = earlier re-presses, more risk of double clicks.")]
-        public double ActivationDistance { set; get; } = 20;
+        public double ActivationDistance { set; get; } = 10;
 
         [Property("Activation Percent"), DefaultPropertyValue(0.5), Unit("%"), ToolTip(
             "Rapid re-press: part of the required rise that grows with pressure, in % of the lowest point.\n" +
@@ -169,6 +170,12 @@ namespace RapidTrigger
             "Fast release detector: release once the fall in excess of the drag allowance adds up to this.\n" +
             "Lower = earlier releases. Keep it above the pressure noise (>= 40 if pressure changes every report).")]
         public double FastReleaseDistance { set; get; } = 10;
+
+        [Property("Tap Allowance"), DefaultPropertyValue(0.5), ToolTip(
+            "Fast release detector: the drag allowance starts at this fraction when the tip presses and ramps to the full\n" +
+            "allowance over Hold Time. Taps release earlier; holds and drags get the full allowance once they last.\n" +
+            "Lower = faster taps, more double clicks on landing bounces. 1 = off.")]
+        public double TapAllowance { set; get; } = 0.5;
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +
@@ -196,7 +203,7 @@ namespace RapidTrigger
         public double PressDriftTimeConstant { set; get; } = 0;
 
         [Property("Hold Time"), DefaultPropertyValue(150.0), Unit("ms"), ToolTip(
-            "Time over which both release distances ramp up to the Hold Release Multiplier.")]
+            "Time over which Tap Allowance ramps to the full allowance and both release distances to the Hold Release Multiplier.")]
         public double HoldTime { set; get; } = 150;
 
         [Property("Hold Release Multiplier"), DefaultPropertyValue(1.0), ToolTip(

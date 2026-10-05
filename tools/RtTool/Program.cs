@@ -53,7 +53,7 @@ static void PrintUsage()
             recommended plugin settings.
 
         Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, DropoutPressure, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
-        ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, PressDriftTimeConstant,
+        ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, TapAllowance, PressDriftTimeConstant,
         HoldTime, HoldReleaseMultiplier.
 
         Other options:

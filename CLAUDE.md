@@ -125,11 +125,35 @@ Per report: `Update(rawPressure, elapsedMs)`.
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
-- Defaults (2.5.2): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 20 + 0.5 %,
-  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10,
+- Fast-detector allowance × `TapAllowance` (0.5) at press start, ramping linearly to × 1 over `HoldTime`
+  (150 ms) (2.6.0). Every press (Contact or Rearm) restarts the ramp.
+- Defaults (2.6.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
+  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.5,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2.6.0, owner: "make sure it's as fast as it can ever be, speed is the most important."**
+- What 200 Hz bought (same strokes of both 5 ms logs, every other sample dropped to simulate 10 ms): presses
+  3.0 ms earlier on average (p90 5), final releases 4.5–4.9 ms earlier (p90 10).
+- Presses: 155 / 156 contacts on the 5 ms logs press on their first report; the exception is 0 → 8191 → 1966
+  (phantom sample just before a real touch, 5 ms). Nothing left there without clicking on post-lift phantoms.
+- Releases vs an oracle that releases on the first falling sample after the final peak (unreachable: hold
+  wobble has falling samples too): taps 15.3 ms behind on average with 2.5.2. Frontier over FastFallSpeed
+  0–2 × FastFallPercent 0.1–0.19 × FRD 3–10 on both 5 ms logs: every faster point adds real cut-outs (first one:
+  a hold dip 6774 → 6254 over ~55 ms at 83.56 s of the dropouts log); 0 / 0.1 / 3 is 5 ms faster but adds 13.
+  So 2 / 0.19 / 10 stays.
+- `TapAllowance` (reconsidered; see the 9 ms notes: same idea as "allowance ramping from low (taps) to high
+  (holds)", a time-based tap/hold split in the TimerwThreshold/HSK family, but one detector with a continuous
+  ramp). On the 5 ms data: 0.5 over 150 ms → taps 15.3 → 14.4 ms behind the oracle, 22 releases one sample
+  earlier and none later, no new real cut-out, hold margin unchanged (1.35); 9 ms logs 47 earlier, +1 landing
+  bounce (old log 1.18 s: 3996 → 3965 → 4016). Synthetic: re-presses caught 1121 → 1146, light drags ±10 still 0,
+  ±15 42 → 95, medium 13 → 14; a drag dipping from the moment it lands tolerates ~11 % dips instead of ~14 % for
+  the first 150 ms (`DragDippingRightAfterContactIsTheTapAllowanceTrade`). 0.5 / 250 ms gained 0.5 ms more but
+  started cutting light drags; 0.3 adds medium cut-outs.
+- Activation 20 → 10 (+ 0.5 %): synthetic re-press delay 8.4 → 7.4 ms (with TapAllowance), no change on any real
+  log. Margin on the +39 wobble at 6976 (old log): 44.9 / 39 = 1.15 (was 1.41). 10 + 0.25 % adds a re-press on
+  the 5 ms log.
 
 **Pressure dropouts (2026-10-05), `recordings/play-ptk670-5ms-dropouts-20261005.csv`:** 90 s of gameplay,
 5 ms sampling, 2.5.1-era build (the live guard only covered drops from exactly 8191 for 12 ms). The firmware
