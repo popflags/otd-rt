@@ -41,12 +41,16 @@ namespace RapidTrigger
         public double PhantomConfirmTime { get; set; } = 20;
 
         /// <summary>
-        /// While pressed, a drop straight from PhantomContactPressure (max) to the lift threshold is held back this long,
-        /// in ms. If pressure comes back above the lift threshold in that time, the drop is ignored as a sensor dropout
-        /// (max, 0, max); otherwise it releases as a lift. Costs only lifts straight from max pressure to zero, which
-        /// no pressed stroke in the recordings did. 0 = off.
+        /// A drop straight from DropoutPressure or more to the lift threshold is held back this long, in ms. If pressure
+        /// comes back above the lift threshold in that time, the drop is ignored as a sensor dropout; otherwise it counts
+        /// as a lift. The PTK-670 on 5 ms firmware reports 0 for 5-45 ms when pressed hard (from 7750 up, and in long
+        /// 8191 / 0 bursts while saturated). Real lifts always pass through lower pressures first (the last sample before
+        /// zero was at most ~3000 in every recording), so this only delays lifts that never happened. 0 = off.
         /// </summary>
-        public double DropoutTime { get; set; } = 12;
+        public double DropoutTime { get; set; } = 60;
+
+        /// <summary>Lowest pressure a drop to zero can come from and still be treated as a possible dropout.</summary>
+        public double DropoutPressure { get; set; } = 6000;
 
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
@@ -188,7 +192,7 @@ namespace RapidTrigger
 
             double p = pressure;
 
-            if (Pressed && HoldDropout(p, ref elapsedMs))
+            if (HoldDropout(p, ref elapsedMs))
                 return TriggerEvent.None;
 
             double previous = _previousPressure;
@@ -206,9 +210,10 @@ namespace RapidTrigger
         }
 
         /// <summary>
-        /// Holds back a fall straight from max pressure to zero until it has lasted DropoutTime. Returns true while it
-        /// is held back. The previous pressure stays at the level before the drop, so if pressure comes back the zero
-        /// never happened; once it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
+        /// Holds back a fall straight from DropoutPressure or more to zero until it has lasted DropoutTime. Returns true
+        /// while it is held back. The previous pressure stays at the level before the drop, so if pressure comes back
+        /// the zero never happened (no release while pressed; no fresh contact or lowered trough while released); once
+        /// it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
         /// </summary>
         private bool HoldDropout(double p, ref double elapsedMs)
         {
@@ -217,7 +222,7 @@ namespace RapidTrigger
 
             if (_dropoutMs < 0)
             {
-                if (!zero || s.DropoutTime <= 0 || s.PhantomContactPressure <= 0 || _previousPressure < s.PhantomContactPressure)
+                if (!zero || s.DropoutTime <= 0 || _previousPressure < Math.Max(s.DropoutPressure, s.LiftThreshold + 1))
                     return false;
                 _dropoutMs = 0;
                 _deferredMs = elapsedMs;

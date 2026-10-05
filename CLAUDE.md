@@ -110,11 +110,11 @@ Per report: `Update(rawPressure, elapsedMs)`.
     dropped if the pen lifts first.
   - Otherwise *Rearm*: press when pressure ≥ trough + `ActivationDistance`.
 - **Pressed:** whichever detector fires first releases.
-  1. **Lift:** pressure ≤ `LiftThreshold`. Exception (2.5.0, owner request "just in case"): a fall straight
-     from ≥ `PhantomContactPressure` (8191) to ≤ lift is held back `DropoutTime` (12 ms; still reported as
-     pressed). If pressure comes back above lift in that time the zero is ignored (previous pressure stays at
-     the pre-drop level, so 8191 → 0 → 3000 is judged as 8191 → 3000); otherwise it releases as Lift. None of
-     the three recordings has a pressed stroke falling straight from 8191 to 0, nor a max → 0 → max dropout.
+  1. **Lift:** pressure ≤ `LiftThreshold`. Exception (dropout guard, 2.5.0, widened in 2.5.2): a fall straight
+     from ≥ `DropoutPressure` (6000) to ≤ lift is held back `DropoutTime` (60 ms), in **both** states. If
+     pressure comes back above lift in that time the zero is ignored: previous pressure stays at the pre-drop
+     level (8191 → 0 → 3000 is judged as 8191 → 3000), no release while pressed, no fresh contact / lowered
+     trough while released. Otherwise it counts as a lift. See the dropouts recording below.
   2. **FastRelease (CUSUM):** on each report whose pressure *differs* from the previous one,
      `FallExcess = max(0, FallExcess + (prev − p) − (FastFallSpeed + FastFallPercent%·prev)·dt)`, with dt = time since the previous
      change (repeated values are not new samples; before 2026-10-01 dt was the report interval, which on the
@@ -125,11 +125,30 @@ Per report: `Update(rawPressure, elapsedMs)`.
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
-- Defaults (2.5.1): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 12 ms, Activation 20 + 0.5 %,
+- Defaults (2.5.2): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 20 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**Pressure dropouts (2026-10-05), `recordings/play-ptk670-5ms-dropouts-20261005.csv`:** 90 s of gameplay,
+5 ms sampling, 2.5.1-era build (the live guard only covered drops from exactly 8191 for 12 ms). The firmware
+reports **0 when pressed hard**: one-sample zeros from 7750–8121 that return to the same level (8038 → 0 →
+8012, 7896 → 0 → 7890, 7752 → 0 → 7746), and while saturated whole bursts alternating 8191 / 0 for 300–500 ms
+with zero runs of 5–45 ms (57 of 74 zeros last one sample). Bursts can start straight from below max
+(7846 → 0, 8121 → 0). It looks like an overflow: values above max come out as 0. The 2026-10-05 5 ms log has one
+too (8169 → 0 for 7 ms → 8164 at 9.95 s, previously counted as two strokes). The owner predicted this.
+- Every real lift in all four logs (zero lasting ≥ 60 ms after a pressed stroke) came from ≤ 3038 (5 ms logs:
+  ≤ 2692): pressure always passes through lower values first. The only drops from ≥ 5000 straight to a long zero
+  are one-sample phantom 8191 strokes. Hence DropoutPressure 6000 (dropouts ≥ 7752, lifts ≤ ~3000) and
+  DropoutTime 60 ms (longest dropout 45 ms); on the recordings the guard never delays a real lift.
+- Replay, 2.5.1 guard → 2.5.2 guard: dropouts log presses 65 → 55 (10 false lift + re-press pairs gone, incl.
+  two holds cut for ~350–400 ms at 73.5 s and 76.9 s), lead before lift p10 0 → 25 ms; 5 ms log 106 → 105
+  presses (the 9.95 s dropout); 9 ms logs unchanged.
+- Same log: some strokes have reports every ~3 ms with a new pressure each (20.0–20.6 s, 23.8 s, 28.0 s). Two
+  landing bounces right after contact release and re-press within ~5 ms (20.47 s: 5065 → 4970 → 5207; 45.20 s:
+  4021 → 3839 → 4209), plus a wobble at a tap's top (45.71 s). Not changed (same kind as the accepted landing
+  re-presses); a short post-contact release hold-off would fix them at the cost of very short taps.
 
 **5 ms firmware (2026-10-05), `recordings/play-ptk670-5ms-20261005.csv`:** 84 s, recorded with 2.3.x/2.4.0
 defaults. Pressure changes every 5 ms (1000 reports/s). 106 strokes, all lifted: ~93 taps, 13 holds ≥ 300 ms

@@ -322,14 +322,14 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
-        public void LiftStraightFromMaxPressureReleasesAfterDropoutTime()
+        public void LiftStraightFromHighPressureReleasesAfterDropoutTime()
         {
             var engine = Engine();
             engine.Update(0, 1);
             Signals.Run(engine, Signals.Samples(5, 7000, 8191));
 
-            var events = Signals.Run(engine, Signals.Samples(5, 0, 0, 0, 0));
-            Assert.Equal((12, TriggerEvent.Lift), events.Single());
+            var events = Signals.Run(engine, Signals.Samples(5, Enumerable.Repeat(0.0, 14).ToArray()));
+            Assert.Equal((60, TriggerEvent.Lift), events.Single());
 
             var off = Engine(new TriggerSettings { DropoutTime = 0 });
             off.Update(0, 1);
@@ -338,13 +338,48 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
-        public void LiftFromBelowMaxPressureIsNotDelayed()
+        public void LiftFromBelowDropoutPressureIsNotDelayed()
+        {
+            // Real lifts on every recording: the last sample before zero was at most ~3000 (here 1569 from the 5 ms log).
+            var engine = Engine();
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(5, 1500, 1560, 1569));
+            Assert.True(engine.Pressed);
+
+            Assert.Equal(TriggerEvent.Lift, engine.Update(0, 1));
+        }
+
+        [Theory]
+        // recordings/play-ptk670-5ms-dropouts-20261005.csv: one-sample zeros below max pressure (78.6 s, 81.6 s) ...
+        [InlineData(new double[] { 7853, 8048, 8166, 8150, 8122, 8090, 8066, 8038, 0, 8012, 7999, 7981 })]
+        [InlineData(new double[] { 7675, 7690, 7724, 7752, 0, 7746, 7717, 7665 })]
+        // ... and the start of the 8191 / 0 burst at 76.9 s, entered straight from 7846 (zeros of 5-30 ms).
+        [InlineData(new double[] { 7216, 7546, 7846, 0, 8191, 8191, 8191, 8191, 0, 0, 8191, 0, 0, 0, 0, 0, 0, 8191, 0, 0, 0, 0, 0,
+            8191, 0, 0, 0, 8191, 0, 0, 8191, 8191, 8191, 8191, 0, 0, 0, 8191, 0, 8191, 0, 8191, 0, 0, 8191, 8191, 8191, 0, 8191, 8158 })]
+        public void RealDropoutsWhilePressedHardDoNotRelease(double[] samples)
         {
             var engine = Engine();
             engine.Update(0, 1);
-            Signals.Run(engine, Signals.Samples(5, 7000, 8169));
+            Signals.Run(engine, Signals.Samples(5, 6000, samples[0]));
 
-            Assert.Equal(TriggerEvent.Lift, engine.Update(0, 1));
+            var events = Signals.Run(engine, Signals.Samples(5, samples));
+
+            Assert.Empty(events);
+            Assert.True(engine.Pressed);
+        }
+
+        [Fact]
+        public void DropoutWhileReleasedDoesNotFakeAFreshContact()
+        {
+            // Released mid-hold at high pressure (a re-press without lifting is pending); a dropout to zero must not
+            // count as a lift, or the next sample would press as a fresh contact.
+            var engine = Engine();
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(5, 7500, 7500, 7000, 6200));
+            Assert.False(engine.Pressed);
+
+            Assert.Empty(Signals.Run(engine, Signals.Samples(5, 6150, 0, 6140, 6130)));
+            Assert.False(engine.Pressed);
         }
 
         [Fact]

@@ -73,6 +73,7 @@ namespace RapidTrigger
                 PhantomContactPressure = PhantomContactPressure,
                 PhantomConfirmTime = PhantomConfirmTime,
                 DropoutTime = DropoutTime,
+                DropoutPressure = DropoutPressure,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
                 ActivationPercent = ActivationPercent,
@@ -127,11 +128,16 @@ namespace RapidTrigger
             "How long a contact that starts at Phantom Contact Pressure must last before it presses.")]
         public double PhantomConfirmTime { set; get; } = 20;
 
-        [Property("Dropout Time"), DefaultPropertyValue(12.0), Unit("ms"), ToolTip(
-            "While pressed, a drop straight from Phantom Contact Pressure (max) to zero is held back this long.\n" +
-            "If pressure comes back in that time, the zero is ignored as a sensor dropout and the tip stays down.\n" +
-            "Only delays lifts straight from max pressure to zero. 0 = off.")]
-        public double DropoutTime { set; get; } = 12;
+        [Property("Dropout Time"), DefaultPropertyValue(60.0), Unit("ms"), ToolTip(
+            "A drop straight from Dropout Pressure or more to zero is held back this long. If pressure comes back in\n" +
+            "that time, the zero is ignored as a sensor dropout (the PTK-670 reports 0 for 5-45 ms when pressed hard).\n" +
+            "Real lifts pass through lower pressures first and are not delayed. 0 = off.")]
+        public double DropoutTime { set; get; } = 60;
+
+        [Property("Dropout Pressure"), DefaultPropertyValue(6000.0), Unit("raw"), ToolTip(
+            "Lowest pressure a drop to zero can come from and still be treated as a possible dropout.\n" +
+            "Dropouts were seen from 7750 up; real lifts came from 3000 or less.")]
+        public double DropoutPressure { set; get; } = 6000;
 
         [Property("Lift Threshold"), DefaultPropertyValue(2.0), Unit("raw"), ToolTip(
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]
