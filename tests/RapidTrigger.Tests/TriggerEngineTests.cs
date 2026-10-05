@@ -22,7 +22,8 @@ namespace RapidTrigger.Tests
         private static void HoldAt(TriggerEngine engine, double level)
         {
             Signals.Run(engine, Signals.Ramp(0, level, 40));
-            Signals.Run(engine, Signals.Hold(level, 100));
+            // Past the Tap Allowance ramp (Hold Time), so the full allowance applies.
+            Signals.Run(engine, Signals.Hold(level, 300));
         }
 
         [Fact]
@@ -115,7 +116,7 @@ namespace RapidTrigger.Tests
         [Fact]
         public void SlowFallBelowDragSpeedNeverTriggersTheFastDetector()
         {
-            // 9 units/ms for 30 ms: 270 units down, never faster than the allowance (0.5 + 0.25% of ~3800 = 10 units/ms).
+            // 9 units/ms for 30 ms: 270 units down, never faster than the allowance (2 + 0.19% of ~3800 = 9.2 units/ms).
             var engine = Engine(new TriggerSettings { ReleaseDistance = 100000 });
             HoldAt(engine, 4000);
 
@@ -172,18 +173,75 @@ namespace RapidTrigger.Tests
         [Fact]
         public void DragDippingRightAfterContactIsTheTapAllowanceTrade()
         {
-            // A 12% dip + 2% tremor drag at 5 ms sampling (holds with the full allowance up to ~14%), dipping from the moment it lands:
-            // with half the allowance during the first 150 ms it cuts out (~11% still holds). Later in the drag both hold (above).
-            static bool Cuts(double tapAllowance)
+            // A drag at 5000 dipping 16% over 400 ms from the moment it lands, 1% tremor, +-7.5 noise (about the measured
+            // sigma), 5 ms samples. With the Tap Allowance ramp (0.4 over 250 ms) it cuts out; without it, it holds (the
+            // first dip that cuts is ~13% vs ~22%). Later in a drag both hold (SlowDipsTremorAndNoiseDuringADragDoNotRelease).
+            static bool Cuts(TriggerSettings s)
             {
-                var engine = new TriggerEngine(new TriggerSettings { TapAllowance = tapAllowance });
+                var engine = new TriggerEngine(s);
                 Signals.Run(engine, Signals.Ramp(0, 5000, 60));
-                var drag = Signals.SampleAndHold(Signals.Drag(5000, 400, 0.12, 400, 0.02, 15, seed: 1), 5);
+                var drag = Signals.SampleAndHold(Signals.Drag(5000, 400, 0.16, 400, 0.01, 7.5, seed: 1), 5);
                 return Signals.Run(engine, drag).Any(e => IsRelease(e.Event));
             }
 
-            Assert.True(Cuts(0.5));
-            Assert.False(Cuts(1));
+            Assert.True(Cuts(new TriggerSettings()));
+            Assert.False(Cuts(new TriggerSettings { TapAllowance = 1, PressHoldoff = 0 }));
+        }
+
+        [Fact]
+        public void LandingBounceRightAfterContactIsAbsorbedByPressHoldoff()
+        {
+            // recordings/play-ptk670-5ms-dropouts-20261005.csv, 20.47 s (reports every ~1 ms there): 5065 -> 4970 -> 5207
+            // right after contact released and re-pressed (a double click) without the holdoff.
+            var samples = new double[] { 5065, 4970, 5207, 5308, 5377, 5424, 5456, 5494, 5543, 5608, 5683, 5776, 5917, 6038 };
+
+            var engine = Engine();
+            engine.Update(0, 1);
+            var events = Signals.Run(engine, Signals.Samples(1, samples));
+            Assert.Equal((0, TriggerEvent.Contact), events.Single());
+
+            var off = Engine(new TriggerSettings { PressHoldoff = 0 });
+            off.Update(0, 1);
+            Assert.Contains(Signals.Run(off, Signals.Samples(1, samples)), e => e.Event == TriggerEvent.Rearm);
+        }
+
+        [Fact]
+        public void PressHoldoffDelaysOnlyReleasesInsideIt()
+        {
+            // A fast fall 5 ms after contact waits until the holdoff ends; a lift is never held off.
+            var engine = Engine();
+            engine.Update(0, 1);
+            var events = Signals.Run(engine, Signals.Samples(5, 4000, 3000, 2000));
+            Assert.Equal((8, TriggerEvent.FastRelease), events[1]);
+
+            var lift = Engine();
+            lift.Update(0, 1);
+            Assert.Equal((1, TriggerEvent.Lift), Signals.Run(lift, Signals.Samples(1, 4000, 0))[1]);
+        }
+
+        [Fact]
+        public void RePressRampsFromRepressAllowanceNotTapAllowance()
+        {
+            // After a re-press without lifting the allowance starts at RepressAllowance: a re-press inside a held motion
+            // usually continues as a hold. With RepressAllowance as low as TapAllowance 0.15, this wobble after the
+            // re-press (from a 9 ms log, newtip 44.1 s) releases again.
+            var engine = new TriggerEngine(new TriggerSettings { TapAllowance = 0.15 });
+            engine.Update(0, 1);
+            Signals.Run(engine, Signals.Samples(9, 6000, 7000));
+            Signals.Run(engine, Signals.Hold(7000, 300));
+            Signals.Run(engine, Signals.Samples(9, 6500, 5800, 5450));   // release
+            var rest = Signals.Samples(9, 5602, 5930, 6029, 5979, 5916, 5882, 5928, 6057, 6063, 6057, 6097, 6108);
+
+            var events = Signals.Run(engine, rest);
+            Assert.Equal(TriggerEvent.Rearm, events.First().Event);
+            Assert.DoesNotContain(events, e => IsRelease(e.Event));
+
+            var low = new TriggerEngine(new TriggerSettings { TapAllowance = 0.15, RepressAllowance = 0.15 });
+            low.Update(0, 1);
+            Signals.Run(low, Signals.Samples(9, 6000, 7000));
+            Signals.Run(low, Signals.Hold(7000, 300));
+            Signals.Run(low, Signals.Samples(9, 6500, 5800, 5450));
+            Assert.Contains(Signals.Run(low, rest), e => IsRelease(e.Event));
         }
 
         [Fact]
@@ -300,8 +358,10 @@ namespace RapidTrigger.Tests
             // Light drag: 10% dips over 300 ms, 1.5% tremor at 9 Hz, +-10 noise (sigma 5.8; the 5 ms recording shows ~3-5
             // on steady holds) per 5 ms sample. The fixed part of the allowance (2 units/ms, 10 per sample) carries
             // this; the 9 ms era default (0.5 units/ms, 2.5 per 5 ms sample) cut out here. At +-15 some still cut out.
+            // Past the Tap Allowance ramp; drags that dip from the moment they land: DragDippingRightAfterContactIsTheTapAllowanceTrade.
             var engine = Engine();
             Signals.Run(engine, Signals.Ramp(0, level, 40));
+            Signals.Run(engine, Signals.Hold(level, 250));
 
             var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(level, 8000, 0.10, 300, 0.015, 10, seed: 3), 5));
 
@@ -310,6 +370,7 @@ namespace RapidTrigger.Tests
 
             var old = Engine(new TriggerSettings { FastFallSpeed = 0.5, FastFallPercent = 0.25 });
             Signals.Run(old, Signals.Ramp(0, level, 40));
+            Signals.Run(old, Signals.Hold(level, 250));
             Assert.Contains(Signals.Run(old, Signals.SampleAndHold(Signals.Drag(level, 8000, 0.10, 300, 0.015, 10, seed: 3), 5)),
                 e => e.Event == TriggerEvent.FastRelease);
         }
@@ -382,6 +443,8 @@ namespace RapidTrigger.Tests
             var engine = Engine();
             engine.Update(0, 1);
             Signals.Run(engine, Signals.Samples(5, 6000, samples[0]));
+            // These came hundreds of ms into holds, past the Tap Allowance ramp.
+            Signals.Run(engine, Signals.Hold(samples[0], 300));
 
             var events = Signals.Run(engine, Signals.Samples(5, samples));
 
@@ -434,6 +497,7 @@ namespace RapidTrigger.Tests
         {
             var engine = Engine();
             engine.Update(3000, 1);
+            engine.Update(3000, 10);
             Assert.True(IsRelease(engine.Update(2700, 1)));
             engine.Update(2500, 1);
             // 10 + 0.5% of 2500 = 22.5.
@@ -480,6 +544,7 @@ namespace RapidTrigger.Tests
         {
             var engine = Engine();
             engine.Update(3000, 1);
+            engine.Update(3000, 10);
             Assert.Equal(TriggerEvent.None, engine.Update(2995, 0));
             Assert.True(IsRelease(engine.Update(2700, 0)));
             Assert.False(double.IsNaN(engine.FallExcess));

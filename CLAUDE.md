@@ -125,13 +125,39 @@ Per report: `Update(rawPressure, elapsedMs)`.
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
-- Fast-detector allowance × `TapAllowance` (0.5) at press start, ramping linearly to × 1 over `HoldTime`
-  (150 ms) (2.6.0). Every press (Contact or Rearm) restarts the ramp.
-- Defaults (2.6.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
-  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.5,
-  ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
+- Fast-detector allowance × `TapAllowance` (0.4, after a Contact) or × `RepressAllowance` (0.5, after a Rearm) at
+  press start, ramping linearly to × 1 over `HoldTime` (250 ms) (2.6.0, split in 2.7.0).
+- `PressHoldoff` (8 ms, 2.7.0): for this long after any press only Lift releases (detectors keep tracking).
+- Defaults (2.7.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
+  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
+  PressHoldoff 8 ms, HoldTime 250 ms,
+  ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2.7.0, owner: "squeeze every last drop of stable-ish speed from 200 Hz, ms matters"; also cares about consistency
+for rhythmic clicking.** Tools: tap release time vs a fixed 3 %-of-peak trigger on the same taps (both 5 ms logs, 120
+taps; differences between configs are real time differences), extra clicks (re-presses) inside taps / holds
+(strokes merged across dropout zeros < 60 ms), and the Sweep synthetic sets.
+- Consistency: release spread vs a fixed-fraction trigger is ~2.1–2.5 ms SD, of which 1.4 is 5 ms sampling. No
+  FastFall/FRD setting lowers it by more than ~0.1 ms without slowing taps or cutting a hold; the rest follows the
+  owner's lift speed (a slow lift needs one or two more samples to beat hold wobble). Force-independent (allowance
+  scales with pressure); taps ≥ 150 ms release ~2 ms later relative to shorter ones.
+- The ramp length mattered more than its depth: TapAllowance 0.5 over 250 ms beat 0.3 over 150. Real 5 ms logs: no
+  hold cut down to 0.05 / 400 ms. The 9 ms logs found two failure modes: (a) after an accepted mid-hold re-press,
+  a low ramp restarted on the Rearm cut the rest of the hold again (newtip 44.1 s, 55.4 s) -> separate
+  RepressAllowance, 0.5–1 all clean; (b) a two-stage hold start (newtip 190.1 s: 5104 -> 4977 over ~27 ms at
+  +60 ms) cuts with TapAllowance ≤ 0.3, holds at 0.4.
+- Early-drag tolerance (first dip that cuts within 400 ms of landing, 5 seeds, ±7.5 noise, 1 % / 2 % tremor, at
+  5000): 0.15/250 9 % / 2 %, 0.3/250 12 % / 4 %, **0.4/250 13 % / 6 %**, 0.5/150 (2.6.0) 19 % / 12 %, no ramp 22 % / 16 %.
+- Chosen 0.4 / 0.5 / 250 ms + PressHoldoff 8: taps release ~1.0 ms earlier on average than 2.6.0 (+1.03 -> −0.01 ms
+  vs the 3 % reference), SD 2.05 -> 2.34; per event 25 releases earlier on the 5 ms logs, the only "later" ones are
+  two recording-start artefacts and the 45.20 s landing bounce, now one tap instead of a double click; double
+  clicks inside taps 4 -> 2 (5 ms logs) / 4 -> 3 (9 ms); no new hold cut on any log. Synthetic: re-presses 1146 ->
+  1163, light ±10 0 -> 1, ±15 95 -> 122, medium 14. Faster option documented: TapAllowance 0.15 (~1.5 ms more,
+  case (b) cuts, early-drag tolerance 9 % / 2 %).
+- PressHoldoff 8 ms removes the landing bounces at 20.47 s (5065 -> 4970 -> 5207) and 45.20 s; shortest real tap
+  ~28 ms. 12 ms holdoff was no better on the logs and costs more spread.
 
 **2.6.0, owner: "make sure it's as fast as it can ever be, speed is the most important."**
 - What 200 Hz bought (same strokes of both 5 ms logs, every other sample dropped to simulate 10 ms): presses

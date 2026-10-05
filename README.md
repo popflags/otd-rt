@@ -27,9 +27,10 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
   while lighter re-presses without lifting still release. Reports that repeat the last pressure value
   are not new samples: the PTK-670 on 1000 Hz firmware repeats each value for 5 reports (~9 on older firmware). Rises and
   slow falls drain it back to zero. It releases once the excess reaches **Fast Release Distance**.
-  The allowance starts at **Tap Allowance** (half) when the tip presses and ramps to full over **Hold Time**:
-  taps are over before holds start dipping, so they release a sample earlier, while holds and drags get the
-  full allowance once they last.
+  The allowance starts at **Tap Allowance** (40 %) after a contact, or **Re-press Allowance** (50 %) after a
+  re-press without lifting, and ramps to full over **Hold Time** (250 ms): taps are over before holds start
+  dipping, so they release earlier, while holds and drags get the full allowance once they last. For the first
+  **Press Holdoff** (8 ms) of a press only a lift releases, which absorbs landing bounces.
   Drag dips are slower than the allowance, so they never add up. A real release starts counting the moment it gets faster than any
   drag, with no smoothing lag. This is Page's CUSUM change detector, the standard quickest-detection
   method for a change in slope.
@@ -135,12 +136,13 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 | Fast Fall Speed | 2 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
 | Fast Fall Percent | 0.19 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
-| Tap Allowance | 0.5 | The drag allowance starts at this fraction on press and ramps to full over Hold Time: taps release earlier, holds get the full allowance. 1 = off. |
+| Tap Allowance / Re-press Allowance | 0.4 / 0.5 | The drag allowance starts at this fraction after a contact / a re-press and ramps to full over Hold Time: taps release earlier, holds get the full allowance. 1 = off. |
+| Press Holdoff | 8 ms | Only a lift releases this soon after a press (landing bounces). 0 = off. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |
 | Press Drift Time Constant | 0 ms | Ignores slow creep while released. 0 = off. |
-| Hold Time / Hold Release Multiplier | 150 ms / 1 | Ramp time for Tap Allowance; Hold Release Multiplier scales both release distances up for long presses (1 = off). |
+| Hold Time / Hold Release Multiplier | 250 ms / 1 | Ramp time for Tap Allowance; Hold Release Multiplier scales both release distances up for long presses (1 = off). |
 | Preserve Pressure | off | Pass real pressure instead of full pressure while pressed. |
 | Enable Diagnostics / Diagnostics Directory | off / `~/rapid-trigger-logs` | Per-report CSV for replay and calibration. |
 

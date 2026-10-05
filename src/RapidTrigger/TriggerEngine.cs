@@ -89,12 +89,26 @@ namespace RapidTrigger
         public double FastReleaseDistance { get; set; } = 10;
 
         /// <summary>
-        /// Fast-fall detector: the drag allowance starts at this fraction when the tip presses and ramps linearly to the
-        /// full allowance over HoldTime. Taps end before holds start dipping, so they release earlier, while holds and drags
-        /// get the full allowance once they last. 1 = off. On the 5 ms recordings 0.5 / 150 ms cut no real hold; the cost is
-        /// slightly more double clicks on landing bounces right after contact.
+        /// Fast-fall detector: after a contact from the air, the drag allowance starts at this fraction and ramps linearly to
+        /// the full allowance over HoldTime. Taps end before holds start dipping, so they release earlier, while holds and
+        /// drags get the full allowance once they last. 1 = off. 0.4 over 250 ms: taps on the 5 ms recordings release
+        /// ~1 ms earlier on average than 0.5 over 150 ms, no real hold cut on any recording. 0.15 is ~2.6 ms earlier but cuts
+        /// a two-stage hold start on a 9 ms log (5104 -> 4977 at +60 ms) and tolerates much smaller dips early in a drag.
         /// </summary>
-        public double TapAllowance { get; set; } = 0.5;
+        public double TapAllowance { get; set; } = 0.4;
+
+        /// <summary>
+        /// Same ramp after a re-press without lifting. Kept milder than TapAllowance: a re-press inside a held motion
+        /// continues as a hold (on the 9 ms logs, 0.15 here cut two holds again right after an intended re-press).
+        /// </summary>
+        public double RepressAllowance { get; set; } = 0.5;
+
+        /// <summary>
+        /// For this long after a press, only a lift releases: the fast and slow detectors keep tracking but cannot fire.
+        /// Absorbs landing bounces right after contact (5065 -> 4970 -> 5207 within 6 ms on the 5 ms recording), which
+        /// otherwise release and re-press as a double click. Releases of taps shorter than this wait until it ends. 0 = off.
+        /// </summary>
+        public double PressHoldoff { get; set; } = 8;
 
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
@@ -115,8 +129,11 @@ namespace RapidTrigger
         /// <summary>Same idea on the press side: the trough creeps up after slow rises. 0 = off (fastest re-press).</summary>
         public double PressDriftTimeConstant { get; set; } = 0;
 
-        /// <summary>Time over which TapAllowance ramps to the full allowance and the release distances to HoldReleaseMultiplier.</summary>
-        public double HoldTime { get; set; } = 150;
+        /// <summary>
+        /// Time over which TapAllowance / RepressAllowance ramp to the full allowance and the release distances to
+        /// HoldReleaseMultiplier.
+        /// </summary>
+        public double HoldTime { get; set; } = 250;
 
         /// <summary>Release distance multiplier (both paths) reached after HoldTime. 1 = off.</summary>
         public double HoldReleaseMultiplier { get; set; } = 1;
@@ -152,6 +169,9 @@ namespace RapidTrigger
 
         // Report time held back while a dropout was pending, handed to the state machine once it resolves.
         private double _deferredMs;
+
+        // Whether the current press started from a lifted pen (Contact) rather than a re-press.
+        private bool _pressedFromContact;
 
         public TriggerEngine(TriggerSettings settings)
         {
@@ -306,8 +326,9 @@ namespace RapidTrigger
                 if (p != previous)
                 {
                     double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
-                    if (s.TapAllowance != 1 && s.HoldTime > 0 && HeldTime < s.HoldTime)
-                        allowance *= s.TapAllowance + (1 - s.TapAllowance) * HeldTime / s.HoldTime;
+                    double start = _pressedFromContact ? s.TapAllowance : s.RepressAllowance;
+                    if (start != 1 && s.HoldTime > 0 && HeldTime < s.HoldTime)
+                        allowance *= start + (1 - start) * HeldTime / s.HoldTime;
                     FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * sampleMs);
                 }
                 fastFallBuilding = FallExcess > 0;
@@ -325,6 +346,8 @@ namespace RapidTrigger
 
             if (p <= s.LiftThreshold)
                 return Release(p, TriggerEvent.Lift);
+            if (HeldTime < s.PressHoldoff)
+                return TriggerEvent.None;
             if (fastDetector && FallExcess >= s.FastReleaseDistance * multiplier)
                 return Release(p, TriggerEvent.FastRelease);
             if (_anchor - p >= CurrentReleaseDistance)
@@ -353,6 +376,7 @@ namespace RapidTrigger
         private TriggerEvent Press(double p, TriggerEvent reason)
         {
             Pressed = true;
+            _pressedFromContact = reason == TriggerEvent.Contact;
             _fresh = false;
             _anchor = p;
             HeldTime = 0;
