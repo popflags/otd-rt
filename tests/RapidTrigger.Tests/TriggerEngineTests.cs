@@ -129,27 +129,29 @@ namespace RapidTrigger.Tests
         private static TriggerSettings EveryReportSampled() => new() { FastFallSpeed = 20, FastFallPercent = 0, FastReleaseDistance = 40 };
 
         [Theory]
-        [InlineData(9)]
-        [InlineData(5)]
-        [InlineData(1)]
-        public void SensorNoiseOnAStillHoldDoesNotRelease(int sampleReports)
+        // +-25 uniform noise (sigma ~14) on a 3000 hold for 20 seconds.
+        [InlineData(9, 25)]
+        [InlineData(1, 25)]
+        // 5 ms sampling: +-15 (sigma ~8.7, about twice the 3-5 measured on steady holds in the 5 ms recording). At +-25 the
+        // 2.5.1 allowance at 3000 (7.7 units/ms, 38 per sample) is crossed now and then; 2.5.0's (8.1) just held.
+        [InlineData(5, 15)]
+        public void SensorNoiseOnAStillHoldDoesNotRelease(int sampleReports, double noise)
         {
-            // +-25 uniform noise (sigma ~14) on a 3000 hold for 20 seconds.
             var engine = Engine(sampleReports == 1 ? EveryReportSampled() : null);
             HoldAt(engine, 3000);
 
-            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(3000, 20000, 0, 400, 0, 25, seed: 7), sampleReports));
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(3000, 20000, 0, 400, 0, noise, seed: 7), sampleReports));
 
             Assert.Empty(events);
         }
 
         [Theory]
-        // Defaults, PTK-670 sampling: 15% dips over 400 ms + 2% tremor peak at ~11.6 units/ms, under the allowance at
-        // 5000 (12.5 units/ms). Real hold dips on the recording peaked at 13 units/ms at 7000-8191.
+        // Defaults, PTK-670 sampling: 15% dips over 400 ms + 2% tremor peak at ~11.6 units/ms, right at the allowance at
+        // 5000 (2 + 0.19% = 11.5 units/ms; the peaks rarely line up within a sample, so it holds). Real hold dips on the recording peaked at 13 units/ms at 7000-8191.
         [InlineData(9, 0.15, 0.02)]
         // 5 ms sampling (current firmware): the same +-15 noise per sample is larger relative to the allowance per
         // sample, so the 15% dip drag above sits at the edge: over many seeds the 0.5/0.25 and 1.5/0.22 allowances cut
-        // out about equally often (this seed: only the new one). 10% dips hold.
+        // out about equally often, 2/0.19 (2.5.1) a bit more often. 10% dips hold.
         [InlineData(5, 0.10, 0.02)]
         // The harsher made-up drag (30% dips + 3% tremor, ~20 units/ms) only holds with the fixed 20 units/ms
         // allowance. That is the trade made for faster releases and re-presses without lifting.
@@ -194,6 +196,23 @@ namespace RapidTrigger.Tests
             Assert.Equal(11, events.Count(e => e.Event == TriggerEvent.Rearm));
         }
 
+        [Fact]
+        public void ShallowRePressesAt4000SampledEvery5MsAreDetected()
+        {
+            // 450 deep every 120 ms from 4000 (peak fall ~11.8 units/ms around 4225): 2.5.1's allowance there is
+            // 2 + 0.19% = 10.0 units/ms, so the steepest samples add up past 10; 2.5.0's (1.5 + 0.22% = 10.8) never did,
+            // and every re-press ghosted through. Noise-free, 5 ms samples.
+            static int RePresses(TriggerSettings s)
+            {
+                var engine = new TriggerEngine(s);
+                Signals.Run(engine, Signals.Ramp(0, 4000, 20));
+                return Signals.Run(engine, Signals.SampleAndHold(Signals.Taps(4000, 4450, 12, 120), 5)).Count(e => e.Event == TriggerEvent.Rearm);
+            }
+
+            Assert.Equal(11, RePresses(new TriggerSettings()));
+            Assert.Equal(0, RePresses(new TriggerSettings { FastFallSpeed = 1.5, FastFallPercent = 0.22 }));
+        }
+
         [Theory]
         // Hold dips from recordings/play-ptk670-20261001.csv that the previous version released on.
         [InlineData(new double[] { 7246, 7223, 7207, 7194, 7171, 7064, 7054, 7097, 7171, 7278 })]
@@ -226,7 +245,7 @@ namespace RapidTrigger.Tests
         public void RealTapReleasesOnItsFirstFallingSample()
         {
             // A tap from the recording, one pressure sample per 9 reports: 2947 -> 2825 is 122 down in 9 ms, above the
-            // allowance at 2947 (1.5 + 0.22% = 8.0 units/ms, 72 per sample) by more than 10.
+            // allowance at 2947 (2 + 0.19% = 7.6 units/ms, 68 per sample) by more than 10.
             var engine = Engine();
             engine.Update(0, 1);
 
@@ -237,17 +256,18 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
-        public void RealTapSampledEvery5MsReleasesOnItsSecondFastSample()
+        public void RealTapSampledEvery5MsReleasesOnItsFirstFastSample()
         {
             // The end of a tap from recordings/play-ptk670-5ms-20261005.csv (t = 6.75 s). The first falls (8-35 per
-            // sample) look like any hold; 5350 -> 5276 (74) is 8 over the allowance, 5276 -> 5175 (101) adds 36.
+            // sample) look like any hold; 5350 -> 5276 (74) is 13 over the allowance at 5350 (2 + 0.19% = 12.2 units/ms,
+            // 61 per sample). 2.5.0 (1.5 + 0.22%, 66 per sample) released one sample later, at 5175.
             var engine = Engine();
             engine.Update(0, 1);
 
             var events = Signals.Run(engine, Signals.Samples(5, 5428, 5420, 5407, 5385, 5350, 5276, 5175, 5046, 4892, 0));
 
             Assert.Equal((0, TriggerEvent.Contact), events[0]);
-            Assert.Equal((30, TriggerEvent.FastRelease), events[1]);
+            Assert.Equal((25, TriggerEvent.FastRelease), events[1]);
         }
 
         [Theory]
@@ -257,7 +277,7 @@ namespace RapidTrigger.Tests
         public void LightDragWithNoiseSampledEvery5MsDoesNotRelease(double level)
         {
             // Light drag: 10% dips over 300 ms, 1.5% tremor at 9 Hz, +-10 noise (sigma 5.8; the 5 ms recording shows ~3-5
-            // on steady holds) per 5 ms sample. The fixed part of the allowance (1.5 units/ms, 7.5 per sample) carries
+            // on steady holds) per 5 ms sample. The fixed part of the allowance (2 units/ms, 10 per sample) carries
             // this; the 9 ms era default (0.5 units/ms, 2.5 per 5 ms sample) cut out here. At +-15 some still cut out.
             var engine = Engine();
             Signals.Run(engine, Signals.Ramp(0, level, 40));

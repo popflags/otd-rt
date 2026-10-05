@@ -1,6 +1,6 @@
 // Scores settings on the recordings and synthetic signals; used to choose the defaults (see CLAUDE.md).
 //
-// dotnet run -c Release --project tools/Sweep -- [--ms=5] [--light-noise=10] [--medium] [--nodef] "Key=v1|v2,Key=v|v" ...
+// dotnet run -c Release --project tools/Sweep -- [--ms=5] [--light-noise=10] [--medium] [--misses] [--nodef] "Key=v1|v2,Key=v|v" ...
 //
 // Each argument is a grid over TriggerSettings properties (unlisted ones keep their defaults). Columns:
 //   5ms:   cut-outs on the 5 ms play log (stroke at 62.4 s is landing wobble), hold margin (largest factor the fast
@@ -29,6 +29,7 @@ var rec9b = PressureLog.Load(R + "play-ptk670-newtip-20261001.csv", 1000);
 int SampleMs = 5;
 double LightNoise = 10;
 bool Medium = args.Contains("--medium");
+bool ShowMisses = args.Contains("--misses");
 foreach (var a in args)
 {
     if (a.StartsWith("--ms=")) SampleMs = int.Parse(a[5..]);
@@ -87,12 +88,21 @@ double Margin(TriggerSettings s, PressureLog l, List<(int, int)> st, bool skip68
     var rel = r.Events.Where(e => e.Event is TriggerEvent.FastRelease or TriggerEvent.Release).Select(e => e.Index).ToArray();
     var pr = r.Events.Where(e => e.Event is TriggerEvent.Rearm).Select(e => e.Index).ToArray();
     int caught = 0; double delay = 0;
-    foreach (var (peak, trough, next) in cycles)
+    var misses = new SortedDictionary<string, (int NoRelease, int NoRepress)>();
+    foreach (var (peak, trough, next, label) in cycles)
     {
         bool released = rel.Any(i => i > peak && i <= trough);
         int p = Array.Find(pr, i => i > trough && i <= next);
         if (released && p > 0) { caught++; delay += repress.Time[p] - repress.Time[trough]; }
+        else
+        {
+            misses.TryGetValue(label, out var m);
+            misses[label] = released ? (m.NoRelease, m.NoRepress + 1) : (m.NoRelease + 1, m.NoRepress);
+        }
     }
+    if (ShowMisses)
+        foreach (var (label, m) in misses)
+            Console.WriteLine($"      {label}: {m.NoRelease,2} no release, {m.NoRepress,2} no re-press (of 19)");
     return (caught, caught > 0 ? delay / caught : double.NaN);
 }
 
@@ -129,9 +139,9 @@ static class Synth
         for (int i = 0; i < v.Count; i++) { t[i] = i; p[i] = (uint)Math.Max(0, Math.Round(v[i - i % ms])); }
         return new PressureLog(name, t, p);
     }
-    public static (PressureLog, List<(int Peak, int Trough, int Next)>) Repress(int ms)
+    public static (PressureLog, List<(int Peak, int Trough, int Next, string Label)>) Repress(int ms)
     {
-        var v = new List<double>(); var cyc = new List<(int, int, int)>(); var r = new Random(1);
+        var v = new List<double>(); var cyc = new List<(int, int, int, string)>(); var r = new Random(1);
         foreach (var low in new[] { 1500.0, 4000 })
         foreach (var depth in new[] { 200.0, 300, 400, 600, 800, 1000, 1500, 2000 })
         foreach (var period in new[] { 50, 70, 100, 150 })
@@ -142,7 +152,7 @@ static class Synth
             {
                 int start = v.Count;
                 for (int i = 0; i < period; i++) v.Add(low + depth * 0.5 * (1 + Math.Cos(2 * Math.PI * i / period)) + (r.NextDouble() * 2 - 1) * 15);
-                if (k < 19) cyc.Add((start, start + period / 2, start + period));
+                if (k < 19) cyc.Add((start, start + period / 2, start + period, $"low {low,4} depth {depth,4} period {period,3}"));
             }
             for (int i = 1; i <= 20; i++) v.Add((low + depth) * (1 - i / 20.0));
             for (int i = 0; i < 100; i++) v.Add(0);

@@ -125,8 +125,8 @@ Per report: `Update(rawPressure, elapsedMs)`.
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
-- Defaults (2.5.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 12 ms, Activation 20 + 0.5 %,
-  FastFallSpeed 1.5 raw/ms, FastFallPercent 0.22 %/ms, FastReleaseDistance 10,
+- Defaults (2.5.1): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 12 ms, Activation 20 + 0.5 %,
+  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
 ### Evidence behind the design and defaults
@@ -158,7 +158,24 @@ per sample at 5000–8191 (second differences, repeated values skipped); light-p
   light-pressure noise tolerance, the lower percent keeps heavy-hold releases as fast as before.
   3 / 0.2 / 10 was the first pick (robust to ±15 light noise) but released 12 of 106 real 5 ms strokes one
   sample (5 ms) later, all at 2300–3800 pressure. 3 / 0.25 is the "steady drags" preset if real drags cut out.
-- Medium synthetic drags at 5 ms (11.5 raw/ms worst-case speed vs 12.5 allowance at 5000) sit at the edge for
+- **2.5.1, owner feedback:** "some taps without a full lift or purposeful reactivations are ghosting through, make it
+  a bit more sensitive." `sweep --misses`: every missed synthetic re-press is a missed *release* (the re-press side
+  never misses); all are shallow/slow re-taps at 1500–4000 (depth 200–400, period 70–150 ms) whose fall stays
+  under the allowance. Fix: FastFallSpeed 1.5 → 2, FastFallPercent 0.22 → 0.19 (allowance lower above ~1700,
+  higher below, so light drags stay as robust as 2.5.0). Compared with 2.5.0:
+  - Synthetic re-presses caught 1101 → 1121 of 1216 (noisy set). Noise-free, at 3000–5000 re-taps release from
+    ~50 units shallower (e.g. 450 deep / 120 ms at 4000: 0 → all), nothing changes at 1500
+    (`ShallowRePressesAt4000SampledEvery5MsAreDetected`).
+  - Real logs: 4 / 8 / 24 releases one sample earlier (9 ms, 5 ms, newtip), none later; one new release + re-press
+    on the newtip log at 211.1 s (8191 → 7120 in ~80 ms, ~18 raw/ms, back to 7356, lift 120 ms later; same kind as
+    the intended stroke 68).
+  - Costs: hold margin 1.46 → 1.35 (5 ms log; the 2.3.0 criterion), 1.34 → 1.22 (old 9 ms log); medium synthetic
+    drags ±10: 8 → 13 cut-outs; light ±15: 61 → 42 (better); still holds at ±25 noise on 3000 only at 9 ms (at
+    5 ms the test now uses ±15, ~2× the measured σ).
+  - FastFallPercent 0.20 with FastFallSpeed 1.5 catches slightly more (1127) but light drags at ±15 get worse than
+    2.5.0 (78); 2.5 / 0.18 is steadier (light 17) but catches less (1117). Going further (0.17–0.18 with 1.5–2)
+    drops the hold margin to 1.1–1.3.
+- Medium synthetic drags at 5 ms (11.5 raw/ms worst-case speed vs 11.5 allowance at 5000) sit at the edge for
   every speed-neutral setting. **A real 5 ms drag recording (`drag-*.csv`) is the open item.**
 - Phantom Confirm Time 20 ms left as is: phantoms last one sample (5 ms now, 9 ms before), no real contact has
   started at 8191, so a lower value would gain nothing measurable.

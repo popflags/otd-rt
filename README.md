@@ -128,8 +128,8 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 | Lift Threshold | 2 | Always released at or below this. |
 | Activation Distance | 20 | Re-press rise above the trough (fixed part). Keep the total ≥ 6× noise sigma. |
 | Activation Percent | 0.5 % | Part of the re-press rise that grows with the trough pressure (27 at 1500, 55 at 7000). |
-| Fast Fall Speed | 1.5 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
-| Fast Fall Percent | 0.22 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
+| Fast Fall Speed | 2 raw/ms | Fixed part of the drag allowance. Higher = steadier drags, later releases. |
+| Fast Fall Percent | 0.19 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |

@@ -147,17 +147,17 @@ namespace RapidTrigger
             "Keeps wobble on heavy releases from re-pressing while light re-presses stay quick.")]
         public double ActivationPercent { set; get; } = 0.5;
 
-        [Property("Fast Fall Speed"), DefaultPropertyValue(1.5), Unit("raw/ms"), ToolTip(
+        [Property("Fast Fall Speed"), DefaultPropertyValue(2.0), Unit("raw/ms"), ToolTip(
             "Fast release detector: fixed part of the drag allowance. Falls slower than\n" +
             "Fast Fall Speed + Fast Fall Percent of the pressure are what a drag or hold can do; only the part of each\n" +
             "pressure sample's fall above it counts towards Fast Release Distance.\n" +
             "Higher = steadier drags, later releases. Both 0 = detector off.")]
-        public double FastFallSpeed { set; get; } = 1.5;
+        public double FastFallSpeed { set; get; } = 2;
 
-        [Property("Fast Fall Percent"), DefaultPropertyValue(0.22), Unit("%/ms"), ToolTip(
+        [Property("Fast Fall Percent"), DefaultPropertyValue(0.19), Unit("%/ms"), ToolTip(
             "Fast release detector: part of the drag allowance that grows with pressure (hand wobble grows with force).\n" +
             "Higher = steadier heavy holds, later releases and missed shallow re-presses without lifting.")]
-        public double FastFallPercent { set; get; } = 0.22;
+        public double FastFallPercent { set; get; } = 0.19;
 
         [Property("Fast Release Distance"), DefaultPropertyValue(10.0), Unit("raw"), ToolTip(
             "Fast release detector: release once the fall in excess of the drag allowance adds up to this.\n" +

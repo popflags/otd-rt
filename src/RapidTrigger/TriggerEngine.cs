@@ -69,14 +69,14 @@ namespace RapidTrigger
         /// allowance (times the time since the previous sample) counts towards FastReleaseDistance.
         /// Both 0 = detector off.
         /// </summary>
-        public double FastFallSpeed { get; set; } = 1.5;
+        public double FastFallSpeed { get; set; } = 2;
 
         /// <summary>
         /// Fast-fall detector: the part of the drag allowance that grows with pressure, in % of the current pressure
         /// per ms. Hand wobble grows with force: on the PTK-670 recording, hold dips at 7000-8191 fell up to
         /// 13 raw/ms, while re-presses without lifting at lighter pressure need a smaller allowance to release.
         /// </summary>
-        public double FastFallPercent { get; set; } = 0.22;
+        public double FastFallPercent { get; set; } = 0.19;
 
         /// <summary>
         /// Fast-fall detector: release once the fall in excess of the allowance adds up to this (a one-sided CUSUM).
