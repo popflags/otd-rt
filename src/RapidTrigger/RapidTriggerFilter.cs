@@ -95,6 +95,7 @@ namespace RapidTrigger
                 PhantomContactPressure = PhantomContactPressure,
                 PhantomConfirmTime = PhantomConfirmTime,
                 DropoutTime = DropoutTime,
+                DropoutPressure = DropoutPressure,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
                 ActivationPercent = ActivationPercent,
@@ -105,6 +106,9 @@ namespace RapidTrigger
                 FastFallSpeed = FastFallSpeed,
                 FastFallPercent = FastFallPercent,
                 FastReleaseDistance = FastReleaseDistance,
+                TapAllowance = TapAllowance,
+                RepressAllowance = RepressAllowance,
+                PressHoldoff = PressHoldoff,
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
                 HoldReleaseMultiplier = HoldReleaseMultiplier,
@@ -149,20 +153,25 @@ namespace RapidTrigger
             "How long a contact that starts at Phantom Contact Pressure must last before it presses.")]
         public double PhantomConfirmTime { set; get; } = 20;
 
-        [Property("Dropout Time"), DefaultPropertyValue(12.0), Unit("ms"), ToolTip(
-            "While pressed, a drop straight from Phantom Contact Pressure (max) to zero is held back this long.\n" +
-            "If pressure comes back in that time, the zero is ignored as a sensor dropout and the tip stays down.\n" +
-            "Only delays lifts straight from max pressure to zero. 0 = off.")]
-        public double DropoutTime { set; get; } = 12;
+        [Property("Dropout Time"), DefaultPropertyValue(60.0), Unit("ms"), ToolTip(
+            "A drop straight from Dropout Pressure or more to zero is held back this long. If pressure comes back in\n" +
+            "that time, the zero is ignored as a sensor dropout (the PTK-670 reports 0 for 5-45 ms when pressed hard).\n" +
+            "Real lifts pass through lower pressures first and are not delayed. 0 = off.")]
+        public double DropoutTime { set; get; } = 60;
+
+        [Property("Dropout Pressure"), DefaultPropertyValue(6000.0), Unit("raw"), ToolTip(
+            "Lowest pressure a drop to zero can come from and still be treated as a possible dropout.\n" +
+            "Dropouts were seen from 7750 up; real lifts came from 3000 or less.")]
+        public double DropoutPressure { set; get; } = 6000;
 
         [Property("Lift Threshold"), DefaultPropertyValue(2.0), Unit("raw"), ToolTip(
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]
         public double LiftThreshold { set; get; } = 2;
 
-        [Property("Activation Distance"), DefaultPropertyValue(20.0), Unit("raw"), ToolTip(
+        [Property("Activation Distance"), DefaultPropertyValue(10.0), Unit("raw"), ToolTip(
             "Rapid re-press: how far pressure must rise above its lowest point since the last release (fixed part).\n" +
             "Keep the total above the pressure noise. Lower = earlier re-presses, more risk of double clicks.")]
-        public double ActivationDistance { set; get; } = 20;
+        public double ActivationDistance { set; get; } = 10;
 
         [Property("Activation Percent"), DefaultPropertyValue(0.5), Unit("%"), ToolTip(
             "Rapid re-press: part of the required rise that grows with pressure, in % of the lowest point.\n" +
@@ -185,6 +194,22 @@ namespace RapidTrigger
             "Fast release detector: release once the fall in excess of the drag allowance adds up to this.\n" +
             "Lower = earlier releases. Keep it above the pressure noise (>= 40 if pressure changes every report).")]
         public double FastReleaseDistance { set; get; } = 10;
+
+        [Property("Tap Allowance"), DefaultPropertyValue(0.4), ToolTip(
+            "Fast release detector: after a contact from the air the drag allowance starts at this fraction and ramps to\n" +
+            "the full allowance over Hold Time. Taps release earlier; holds and drags get the full allowance once they last.\n" +
+            "Lower = faster taps, less margin for dips early in a hold or drag (0.15 = ~1.5 ms faster, riskier). 1 = off.")]
+        public double TapAllowance { set; get; } = 0.4;
+
+        [Property("Re-press Allowance"), DefaultPropertyValue(0.5), ToolTip(
+            "Same ramp after a re-press without lifting. Milder, because a re-press inside a held motion usually continues\n" +
+            "as a hold. 1 = off.")]
+        public double RepressAllowance { set; get; } = 0.5;
+
+        [Property("Press Holdoff"), DefaultPropertyValue(8.0), Unit("ms"), ToolTip(
+            "For this long after a press only a lift releases. Absorbs landing bounces right after contact that would\n" +
+            "otherwise release and re-press (double click). 0 = off.")]
+        public double PressHoldoff { set; get; } = 8;
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +
@@ -211,9 +236,10 @@ namespace RapidTrigger
             "0 = off (fastest re-press).")]
         public double PressDriftTimeConstant { set; get; } = 0;
 
-        [Property("Hold Time"), DefaultPropertyValue(150.0), Unit("ms"), ToolTip(
-            "Time over which both release distances ramp up to the Hold Release Multiplier.")]
-        public double HoldTime { set; get; } = 150;
+        [Property("Hold Time"), DefaultPropertyValue(250.0), Unit("ms"), ToolTip(
+            "Time over which Tap / Re-press Allowance ramp to the full allowance and both release distances to the\n" +
+            "Hold Release Multiplier.")]
+        public double HoldTime { set; get; } = 250;
 
         [Property("Hold Release Multiplier"), DefaultPropertyValue(1.0), ToolTip(
             "Release distance multiplier for long presses (drags/holds). Taps stay fast. 1 = off.")]

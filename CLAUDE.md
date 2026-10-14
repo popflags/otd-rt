@@ -124,7 +124,8 @@ same events at the same sample times as the samples alone (`RepeatedSamplesGiveT
 a tablet with a new value every report is unaffected. Exceptions, because they are timers: while a phantom contact
 waits for confirmation, repeats are processed (the 8191 level can sit still for 20 ms); during a dropout the zeros
 are never repeats (the last sample stays at the pre-drop level). Constant real pressure (e.g. saturated at 8191) is
-indistinguishable from repeats: its time is carried to the next change.
+indistinguishable from repeats: its time is carried to the next change. A release held back by `PressHoldoff`
+fires on the report where the holdoff ends, repeat or not.
 
 - **Released:** the trough tracks the minimum (optional `PressDriftTimeConstant` lets it creep up).
   - *Fresh contact* (pressure hit ≤ `LiftThreshold` since the last release): press on the first report
@@ -133,11 +134,11 @@ indistinguishable from repeats: its time is carried to the next change.
     dropped if the pen lifts first.
   - Otherwise *Rearm*: press when pressure ≥ trough + `ActivationDistance`.
 - **Pressed:** whichever detector fires first releases.
-  1. **Lift:** pressure ≤ `LiftThreshold`. Exception (2.5.0, owner request "just in case"): a fall straight
-     from ≥ `PhantomContactPressure` (8191) to ≤ lift is held back `DropoutTime` (12 ms; still reported as
-     pressed). If pressure comes back above lift in that time the zero is ignored (previous pressure stays at
-     the pre-drop level, so 8191 → 0 → 3000 is judged as 8191 → 3000); otherwise it releases as Lift. None of
-     the three recordings has a pressed stroke falling straight from 8191 to 0, nor a max → 0 → max dropout.
+  1. **Lift:** pressure ≤ `LiftThreshold`. Exception (dropout guard, 2.5.0, widened in 2.5.2): a fall straight
+     from ≥ `DropoutPressure` (6000) to ≤ lift is held back `DropoutTime` (60 ms), in **both** states. If
+     pressure comes back above lift in that time the zero is ignored: previous pressure stays at the pre-drop
+     level (8191 → 0 → 3000 is judged as 8191 → 3000), no release while pressed, no fresh contact / lowered
+     trough while released. Otherwise it counts as a lift. See the dropouts recording below.
   2. **FastRelease (CUSUM):** on each pressure sample,
      `FallExcess = max(0, FallExcess + (prev − p) − (FastFallSpeed + FastFallPercent%·prev)·dt)`, with dt = time since the previous
      sample, repeated reports included (before 2026-10-01 dt was the report interval, which on the PTK-670 made the
@@ -148,9 +149,13 @@ indistinguishable from repeats: its time is carried to the next change.
      **previous** sample with `DriftTimeConstant`, so a sudden drop is measured in full. It does not drift
      while `FallExcess > 0`.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
-- Defaults (2.5.1): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 12 ms, Activation 20 + 0.5 %,
-  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10,
-  ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
+- Fast-detector allowance × `TapAllowance` (0.4, after a Contact) or × `RepressAllowance` (0.5, after a Rearm) at
+  press start, ramping linearly to × 1 over `HoldTime` (250 ms) (2.6.0, split in 2.7.0).
+- `PressHoldoff` (8 ms, 2.7.0): for this long after any press only Lift releases (detectors keep tracking).
+- Defaults (2.7.0, unchanged in 2.8.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
+  FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
+  PressHoldoff 8 ms, HoldTime 250 ms,
+  ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
 
@@ -158,23 +163,93 @@ indistinguishable from repeats: its time is carried to the next change.
 recordings (strokes+taps 116 s / 331 strokes, lines+taps 118 s / 267, long drags 174 s / 47 with 7 over 1 s). Host
 timing only (no byte-17 column; `pressed`/`event` columns are 0). 26 one- or two-sample phantom 8191 contacts
 (filtered by 2.3.1) plus one phantom 8191 sample right before a real contact.
+- **2.8.0** merges this work with 2.5.2–2.7.0, which had been released from a branch that never reached `main`.
+  Merged vs 2.7.0 on all seven recordings and the synthetic sets: identical presses, re-presses, cut-outs and lead
+  before lift; only the release-timing metric moved (per-sample descent start).
 - The change request for this firmware quoted v2.0.1 numbers (per-report CUSUM; 500 Hz-repeated `syn_drag` 3
   cut-outs vs 0 samples-only; recordings sigma 10.9/6.7/5.4 with repeats counted). On 2.5.1 the CUSUM and
   `NoiseSigma` already worked per sample: repeated and samples-only synthetic sets gave identical counts, sigma
   3.6/2.4/2.4. The engine change (repeats change no state at all) and RtTool's per-sample descent start therefore
   changed no press/release count on any file; only release timing moved by one report (p50 0.9 → 2.8 ms on
   strokes-taps), because it no longer counts from the repeat report.
-- **Defaults (tuned for 5 ms samples) are far too sensitive here.** Replay with 2.5.1 defaults (contacts / re-presses
-  inside strokes): strokes-taps 331 / 520, lines-taps 250 / 207, long drags 39 / 330. The allowance is per ms, so
-  a 2 ms sample gets 2/5 of a 5 ms sample's slack against the same per-sample noise.
+- **Defaults (tuned for 5 ms samples) are far too sensitive here.** Replay with the 2.7.0 defaults (unchanged in
+  2.8.0; contacts / re-presses inside strokes): strokes-taps 331 / 427, lines-taps 250 / 177, long drags 39 / 328
+  (2.5.1: 520 / 207 / 330 re-presses). The allowance is per ms, so a 2 ms sample gets 2/5 of a 5 ms sample's slack
+  against the same per-sample noise.
 - **Host-timing jitter adds to it.** Replaying with an ideal report clock (report index × 1.002 ms, real gaps > 5 ms
-  kept; what the Firmware Sample Clock gives) at the same defaults: re-presses 520 → 488, 207 → 143, 330 → 275.
+  kept; what the Firmware Sample Clock gives) at the same defaults: re-presses 427 → 391, 177 → 116, 328 → 309
+  (2.5.1 defaults: 520 → 488, 207 → 143, 330 → 275).
   Example on strokes-taps at 13.14 s: contact at 2822, FastRelease 4 ms later on a 22-unit dip that arrived a
   fraction of a ms after the previous sample by the host clock. Not adopted as default (owner's request: generic
   path stays default) and not measurable on real data until recordings are made with it on (they then carry
   `engine_ms`).
 - **Open:** recalibrate the defaults for 2 ms samples from labelled `drag-*`/`tap-*` recordings made with this
   version (Enable Diagnostics on, ideally Firmware Sample Clock on), then `rt calibrate` / `tools/Sweep`.
+
+**2.7.0, owner: "squeeze every last drop of stable-ish speed from 200 Hz, ms matters"; also cares about consistency
+for rhythmic clicking.** Tools: tap release time vs a fixed 3 %-of-peak trigger on the same taps (both 5 ms logs, 120
+taps; differences between configs are real time differences), extra clicks (re-presses) inside taps / holds
+(strokes merged across dropout zeros < 60 ms), and the Sweep synthetic sets.
+- Consistency: release spread vs a fixed-fraction trigger is ~2.1–2.5 ms SD, of which 1.4 is 5 ms sampling. No
+  FastFall/FRD setting lowers it by more than ~0.1 ms without slowing taps or cutting a hold; the rest follows the
+  owner's lift speed (a slow lift needs one or two more samples to beat hold wobble). Force-independent (allowance
+  scales with pressure); taps ≥ 150 ms release ~2 ms later relative to shorter ones.
+- The ramp length mattered more than its depth: TapAllowance 0.5 over 250 ms beat 0.3 over 150. Real 5 ms logs: no
+  hold cut down to 0.05 / 400 ms. The 9 ms logs found two failure modes: (a) after an accepted mid-hold re-press,
+  a low ramp restarted on the Rearm cut the rest of the hold again (newtip 44.1 s, 55.4 s) -> separate
+  RepressAllowance, 0.5–1 all clean; (b) a two-stage hold start (newtip 190.1 s: 5104 -> 4977 over ~27 ms at
+  +60 ms) cuts with TapAllowance ≤ 0.3, holds at 0.4.
+- Early-drag tolerance (first dip that cuts within 400 ms of landing, 5 seeds, ±7.5 noise, 1 % / 2 % tremor, at
+  5000): 0.15/250 9 % / 2 %, 0.3/250 12 % / 4 %, **0.4/250 13 % / 6 %**, 0.5/150 (2.6.0) 19 % / 12 %, no ramp 22 % / 16 %.
+- Chosen 0.4 / 0.5 / 250 ms + PressHoldoff 8: taps release ~1.0 ms earlier on average than 2.6.0 (+1.03 -> −0.01 ms
+  vs the 3 % reference), SD 2.05 -> 2.34; per event 25 releases earlier on the 5 ms logs, the only "later" ones are
+  two recording-start artefacts and the 45.20 s landing bounce, now one tap instead of a double click; double
+  clicks inside taps 4 -> 2 (5 ms logs) / 4 -> 3 (9 ms); no new hold cut on any log. Synthetic: re-presses 1146 ->
+  1163, light ±10 0 -> 1, ±15 95 -> 122, medium 14. Faster option documented: TapAllowance 0.15 (~1.5 ms more,
+  case (b) cuts, early-drag tolerance 9 % / 2 %).
+- PressHoldoff 8 ms removes the landing bounces at 20.47 s (5065 -> 4970 -> 5207) and 45.20 s; shortest real tap
+  ~28 ms. 12 ms holdoff was no better on the logs and costs more spread.
+
+**2.6.0, owner: "make sure it's as fast as it can ever be, speed is the most important."**
+- What 200 Hz bought (same strokes of both 5 ms logs, every other sample dropped to simulate 10 ms): presses
+  3.0 ms earlier on average (p90 5), final releases 4.5–4.9 ms earlier (p90 10).
+- Presses: 155 / 156 contacts on the 5 ms logs press on their first report; the exception is 0 → 8191 → 1966
+  (phantom sample just before a real touch, 5 ms). Nothing left there without clicking on post-lift phantoms.
+- Releases vs an oracle that releases on the first falling sample after the final peak (unreachable: hold
+  wobble has falling samples too): taps 15.3 ms behind on average with 2.5.2. Frontier over FastFallSpeed
+  0–2 × FastFallPercent 0.1–0.19 × FRD 3–10 on both 5 ms logs: every faster point adds real cut-outs (first one:
+  a hold dip 6774 → 6254 over ~55 ms at 83.56 s of the dropouts log); 0 / 0.1 / 3 is 5 ms faster but adds 13.
+  So 2 / 0.19 / 10 stays.
+- `TapAllowance` (reconsidered; see the 9 ms notes: same idea as "allowance ramping from low (taps) to high
+  (holds)", a time-based tap/hold split in the TimerwThreshold/HSK family, but one detector with a continuous
+  ramp). On the 5 ms data: 0.5 over 150 ms → taps 15.3 → 14.4 ms behind the oracle, 22 releases one sample
+  earlier and none later, no new real cut-out, hold margin unchanged (1.35); 9 ms logs 47 earlier, +1 landing
+  bounce (old log 1.18 s: 3996 → 3965 → 4016). Synthetic: re-presses caught 1121 → 1146, light drags ±10 still 0,
+  ±15 42 → 95, medium 13 → 14; a drag dipping from the moment it lands tolerates ~11 % dips instead of ~14 % for
+  the first 150 ms (`DragDippingRightAfterContactIsTheTapAllowanceTrade`). 0.5 / 250 ms gained 0.5 ms more but
+  started cutting light drags; 0.3 adds medium cut-outs.
+- Activation 20 → 10 (+ 0.5 %): synthetic re-press delay 8.4 → 7.4 ms (with TapAllowance), no change on any real
+  log. Margin on the +39 wobble at 6976 (old log): 44.9 / 39 = 1.15 (was 1.41). 10 + 0.25 % adds a re-press on
+  the 5 ms log.
+
+**Pressure dropouts (2026-10-05), `recordings/play-ptk670-5ms-dropouts-20261005.csv`:** 90 s of gameplay,
+5 ms sampling, 2.5.1-era build (the live guard only covered drops from exactly 8191 for 12 ms). The firmware
+reports **0 when pressed hard**: one-sample zeros from 7750–8121 that return to the same level (8038 → 0 →
+8012, 7896 → 0 → 7890, 7752 → 0 → 7746), and while saturated whole bursts alternating 8191 / 0 for 300–500 ms
+with zero runs of 5–45 ms (57 of 74 zeros last one sample). Bursts can start straight from below max
+(7846 → 0, 8121 → 0). It looks like an overflow: values above max come out as 0. The 2026-10-05 5 ms log has one
+too (8169 → 0 for 7 ms → 8164 at 9.95 s, previously counted as two strokes). The owner predicted this.
+- Every real lift in all four logs (zero lasting ≥ 60 ms after a pressed stroke) came from ≤ 3038 (5 ms logs:
+  ≤ 2692): pressure always passes through lower values first. The only drops from ≥ 5000 straight to a long zero
+  are one-sample phantom 8191 strokes. Hence DropoutPressure 6000 (dropouts ≥ 7752, lifts ≤ ~3000) and
+  DropoutTime 60 ms (longest dropout 45 ms); on the recordings the guard never delays a real lift.
+- Replay, 2.5.1 guard → 2.5.2 guard: dropouts log presses 65 → 55 (10 false lift + re-press pairs gone, incl.
+  two holds cut for ~350–400 ms at 73.5 s and 76.9 s), lead before lift p10 0 → 25 ms; 5 ms log 106 → 105
+  presses (the 9.95 s dropout); 9 ms logs unchanged.
+- Same log: some strokes have reports every ~3 ms with a new pressure each (20.0–20.6 s, 23.8 s, 28.0 s). Two
+  landing bounces right after contact release and re-press within ~5 ms (20.47 s: 5065 → 4970 → 5207; 45.20 s:
+  4021 → 3839 → 4209), plus a wobble at a tap's top (45.71 s). Not changed (same kind as the accepted landing
+  re-presses); a short post-contact release hold-off would fix them at the cost of very short taps.
 
 **5 ms firmware (2026-10-05), `recordings/play-ptk670-5ms-20261005.csv`:** 84 s, recorded with 2.3.x/2.4.0
 defaults. Pressure changes every 5 ms (1000 reports/s). 106 strokes, all lifted: ~93 taps, 13 holds ≥ 300 ms

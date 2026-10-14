@@ -41,12 +41,16 @@ namespace RapidTrigger
         public double PhantomConfirmTime { get; set; } = 20;
 
         /// <summary>
-        /// While pressed, a drop straight from PhantomContactPressure (max) to the lift threshold is held back this long,
-        /// in ms. If pressure comes back above the lift threshold in that time, the drop is ignored as a sensor dropout
-        /// (max, 0, max); otherwise it releases as a lift. Costs only lifts straight from max pressure to zero, which
-        /// no pressed stroke in the recordings did. 0 = off.
+        /// A drop straight from DropoutPressure or more to the lift threshold is held back this long, in ms. If pressure
+        /// comes back above the lift threshold in that time, the drop is ignored as a sensor dropout; otherwise it counts
+        /// as a lift. The PTK-670 on 5 ms firmware reports 0 for 5-45 ms when pressed hard (from 7750 up, and in long
+        /// 8191 / 0 bursts while saturated). Real lifts always pass through lower pressures first (the last sample before
+        /// zero was at most ~3000 in every recording), so this only delays lifts that never happened. 0 = off.
         /// </summary>
-        public double DropoutTime { get; set; } = 12;
+        public double DropoutTime { get; set; } = 60;
+
+        /// <summary>Lowest pressure a drop to zero can come from and still be treated as a possible dropout.</summary>
+        public double DropoutPressure { get; set; } = 6000;
 
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
@@ -55,7 +59,7 @@ namespace RapidTrigger
         /// Rise above the lowest pressure since the last release that presses again without lifting
         /// (fixed part; ActivationPercent adds a part that grows with that lowest pressure).
         /// </summary>
-        public double ActivationDistance { get; set; } = 20;
+        public double ActivationDistance { get; set; } = 10;
 
         /// <summary>
         /// Part of the re-press rise that grows with pressure, in % of the lowest pressure since the release. Wobble
@@ -84,6 +88,28 @@ namespace RapidTrigger
         /// </summary>
         public double FastReleaseDistance { get; set; } = 10;
 
+        /// <summary>
+        /// Fast-fall detector: after a contact from the air, the drag allowance starts at this fraction and ramps linearly to
+        /// the full allowance over HoldTime. Taps end before holds start dipping, so they release earlier, while holds and
+        /// drags get the full allowance once they last. 1 = off. 0.4 over 250 ms: taps on the 5 ms recordings release
+        /// ~1 ms earlier on average than 0.5 over 150 ms, no real hold cut on any recording. 0.15 is ~2.6 ms earlier but cuts
+        /// a two-stage hold start on a 9 ms log (5104 -> 4977 at +60 ms) and tolerates much smaller dips early in a drag.
+        /// </summary>
+        public double TapAllowance { get; set; } = 0.4;
+
+        /// <summary>
+        /// Same ramp after a re-press without lifting. Kept milder than TapAllowance: a re-press inside a held motion
+        /// continues as a hold (on the 9 ms logs, 0.15 here cut two holds again right after an intended re-press).
+        /// </summary>
+        public double RepressAllowance { get; set; } = 0.5;
+
+        /// <summary>
+        /// For this long after a press, only a lift releases: the fast and slow detectors keep tracking but cannot fire.
+        /// Absorbs landing bounces right after contact (5065 -> 4970 -> 5207 within 6 ms on the 5 ms recording), which
+        /// otherwise release and re-press as a double click. Releases of taps shorter than this wait until it ends. 0 = off.
+        /// </summary>
+        public double PressHoldoff { get; set; } = 8;
+
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
 
@@ -103,8 +129,11 @@ namespace RapidTrigger
         /// <summary>Same idea on the press side: the trough creeps up after slow rises. 0 = off (fastest re-press).</summary>
         public double PressDriftTimeConstant { get; set; } = 0;
 
-        /// <summary>Time over which the release distances ramp up to HoldReleaseMultiplier while pressed.</summary>
-        public double HoldTime { get; set; } = 150;
+        /// <summary>
+        /// Time over which TapAllowance / RepressAllowance ramp to the full allowance and the release distances to
+        /// HoldReleaseMultiplier.
+        /// </summary>
+        public double HoldTime { get; set; } = 250;
 
         /// <summary>Release distance multiplier (both paths) reached after HoldTime. 1 = off.</summary>
         public double HoldReleaseMultiplier { get; set; } = 1;
@@ -149,6 +178,12 @@ namespace RapidTrigger
         // Report time held back while a dropout was pending, handed to the state machine once it resolves.
         private double _deferredMs;
 
+        // Whether the current press started from a lifted pen (Contact) rather than a re-press.
+        private bool _pressedFromContact;
+
+        // A release that was due but held back by PressHoldoff (None if none).
+        private TriggerEvent _heldOffRelease;
+
         public TriggerEngine(TriggerSettings settings)
         {
             _settings = settings.Clone();
@@ -183,6 +218,7 @@ namespace RapidTrigger
             _phantomMs = -1;
             _dropoutMs = -1;
             _deferredMs = 0;
+            _heldOffRelease = TriggerEvent.None;
             CurrentReleaseDistance = 0;
             HoldReference = 0;
             FallExcess = 0;
@@ -197,18 +233,25 @@ namespace RapidTrigger
             double p = pressure;
 
             // The same pressure as the last sample is the tablet repeating it, not a new sample: nothing changes, its
-            // time goes to the next sample. The two timers (phantom confirmation, dropout) keep running on repeats; a
-            // dropout never sees its zeros as repeats because the last sample stays at the level before the drop.
+            // time goes to the next sample. The timers keep running on repeats: phantom confirmation is processed as
+            // usual, a dropout never sees its zeros as repeats (the last sample stays at the level before the drop),
+            // and a release held back by PressHoldoff fires as soon as the holdoff ends.
             if (p == _previousPressure && _phantomMs < 0 && _dropoutMs < 0)
             {
                 _pendingMs += elapsedMs;
+                if (_heldOffRelease != TriggerEvent.None && HeldTime + _pendingMs >= _settings.PressHoldoff)
+                {
+                    HeldTime += _pendingMs;
+                    _pendingMs = 0;
+                    return Release(p, _heldOffRelease);
+                }
                 return TriggerEvent.None;
             }
 
             elapsedMs += _pendingMs;
             _pendingMs = 0;
 
-            if (Pressed && HoldDropout(p, ref elapsedMs))
+            if (HoldDropout(p, ref elapsedMs))
                 return TriggerEvent.None;
 
             double previous = _previousPressure;
@@ -218,9 +261,10 @@ namespace RapidTrigger
         }
 
         /// <summary>
-        /// Holds back a fall straight from max pressure to zero until it has lasted DropoutTime. Returns true while it
-        /// is held back. The previous pressure stays at the level before the drop, so if pressure comes back the zero
-        /// never happened; once it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
+        /// Holds back a fall straight from DropoutPressure or more to zero until it has lasted DropoutTime. Returns true
+        /// while it is held back. The previous pressure stays at the level before the drop, so if pressure comes back
+        /// the zero never happened (no release while pressed; no fresh contact or lowered trough while released); once
+        /// it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
         /// </summary>
         private bool HoldDropout(double p, ref double elapsedMs)
         {
@@ -229,7 +273,7 @@ namespace RapidTrigger
 
             if (_dropoutMs < 0)
             {
-                if (!zero || s.DropoutTime <= 0 || s.PhantomContactPressure <= 0 || _previousPressure < s.PhantomContactPressure)
+                if (!zero || s.DropoutTime <= 0 || _previousPressure < Math.Max(s.DropoutPressure, s.LiftThreshold + 1))
                     return false;
                 _dropoutMs = 0;
                 _deferredMs = elapsedMs;
@@ -303,6 +347,9 @@ namespace RapidTrigger
             if (fastDetector)
             {
                 double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
+                double start = _pressedFromContact ? s.TapAllowance : s.RepressAllowance;
+                if (start != 1 && s.HoldTime > 0 && HeldTime < s.HoldTime)
+                    allowance *= start + (1 - start) * HeldTime / s.HoldTime;
                 FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * elapsedMs);
                 fastFallBuilding = FallExcess > 0;
             }
@@ -319,12 +366,17 @@ namespace RapidTrigger
 
             if (p <= s.LiftThreshold)
                 return Release(p, TriggerEvent.Lift);
-            if (fastDetector && FallExcess >= s.FastReleaseDistance * multiplier)
-                return Release(p, TriggerEvent.FastRelease);
-            if (_anchor - p >= CurrentReleaseDistance)
-                return Release(p, TriggerEvent.Release);
 
-            return TriggerEvent.None;
+            var due = fastDetector && FallExcess >= s.FastReleaseDistance * multiplier ? TriggerEvent.FastRelease
+                : _anchor - p >= CurrentReleaseDistance ? TriggerEvent.Release
+                : TriggerEvent.None;
+            if (due != TriggerEvent.None && HeldTime < s.PressHoldoff)
+            {
+                _heldOffRelease = due;
+                return TriggerEvent.None;
+            }
+            _heldOffRelease = TriggerEvent.None;
+            return due == TriggerEvent.None ? TriggerEvent.None : Release(p, due);
         }
 
         public double ReleaseDistanceFor(double reference, double heldTime)
@@ -347,6 +399,8 @@ namespace RapidTrigger
         private TriggerEvent Press(double p, TriggerEvent reason)
         {
             Pressed = true;
+            _pressedFromContact = reason == TriggerEvent.Contact;
+            _heldOffRelease = TriggerEvent.None;
             _fresh = false;
             _anchor = p;
             HeldTime = 0;
@@ -359,6 +413,7 @@ namespace RapidTrigger
         private TriggerEvent Release(double p, TriggerEvent reason)
         {
             Pressed = false;
+            _heldOffRelease = TriggerEvent.None;
             _fresh = p <= _settings.LiftThreshold;
             _anchor = p;
             return reason;
