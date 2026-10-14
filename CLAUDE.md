@@ -111,9 +111,18 @@ yet (cloud sessions cannot push tags). Pushing a `v*` tag by hand still works. C
   The host receives them in **bursts**: on the 2026-10-14 recordings, report intervals are ≤ 0.13 ms for 25% and
   ≥ 2.8 ms for 10%, and two consecutive pressure samples (always exactly 2 reports apart, none lost while the pen is
   down) arrive anywhere from 0.2 to 4 ms apart by the host clock (median 1.95). Opt-in **Firmware Sample Clock**
-  (`FirmwareSampleClock`) times 0x1E reports by the byte-17 counter instead: every report 1.002 ms, skipped samples
-  2.004 ms each; host time for other reports, after 50 ms gaps, and for good if the counter's time differs from the
-  host clock by more than ×1.25 over 2 s (warning in the OTD log).
+  (`FirmwareSampleClock`) times 0x1E reports by the byte-17 counter instead: each report gets the counter steps it
+  carries × 2.004 ms (0 if the counter did not step), and the engine adds repeats to the next sample, so every
+  sample gets an exact multiple of 2.004 ms (counter difference since the previous sample's report). Host time for
+  other reports, after 50 ms gaps, and for good if the counter's time differs from the host clock by more than
+  ×1.25 over 2 s (warning in the OTD log).
+  - In ~1.5% of samples the new pressure arrives one report *after* the counter step: per report (S = counter
+    stepped, p = pressure changed) `[S p][. _][S _][. p][. _][S p]`. 2.8.0's clock split every period evenly (1.002
+    ms per report, the stepping report getting 2.004 minus the half already given); there the late sample got
+    3.006 ms and the next one 1.002 ms, half its drag allowance. Measured on real logs with the counter (pressure +
+    byte 17 per report): samples got 1.002 ms 1.45%, 2.004 93.4%, 3.006 1.49%, 4.008 2.3%, 6.012 0.33%. Since 2.8.1
+    each report gets only its own counter steps: 2.004 ms 97.3%, 4.008 2.4% (equal-value samples merged), 6.012
+    0.3% (`SampleArrivingOneReportAfterTheCounterStepStillGetsExactly2004Ms`).
 
 ## The algorithm (TriggerEngine)
 
@@ -177,7 +186,8 @@ timing only (no byte-17 column; `pressed`/`event` columns are 0). 26 one- or two
   (2.5.1: 520 / 207 / 330 re-presses). The allowance is per ms, so a 2 ms sample gets 2/5 of a 5 ms sample's slack
   against the same per-sample noise.
 - **Host-timing jitter adds to it.** Replaying with an ideal report clock (report index × 1.002 ms, real gaps > 5 ms
-  kept; what the Firmware Sample Clock gives) at the same defaults: re-presses 427 → 391, 177 → 116, 328 → 309
+  kept; close to the Firmware Sample Clock, except that the ~1.5% late samples got 3.006 ms and their followers
+  1.002 ms there, like the 2.8.0 clock) at the same defaults: re-presses 427 → 391, 177 → 116, 328 → 309
   (2.5.1 defaults: 520 → 488, 207 → 143, 330 → 275).
   Example on strokes-taps at 13.14 s: contact at 2822, FastRelease 4 ms later on a 22-unit dip that arrived a
   fraction of a ms after the previous sample by the host clock. Not adopted as default (owner's request: generic

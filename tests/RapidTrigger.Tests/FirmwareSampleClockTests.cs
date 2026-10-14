@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit;
@@ -23,16 +24,16 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
-        public void EveryReportGetsHalfASamplePeriodWhateverTheHostTiming()
+        public void EachReportGetsTheCounterStepsItCarriesWhateverTheHostTiming()
         {
             // Sample, repeat, sample, repeat... delivered in bursts.
             var clock = new FirmwareSampleClock();
             Assert.False(clock.TryElapsed(Report(7), 0, Resync, out _));
 
-            Assert.Equal(1.002, Elapsed(clock, 7, host: 0.1), 6);
-            Assert.Equal(1.002, Elapsed(clock, 8, host: 3.8), 6);
-            Assert.Equal(1.002, Elapsed(clock, 8, host: 0.1), 6);
-            Assert.Equal(1.002, Elapsed(clock, 9, host: 0.1), 6);
+            Assert.Equal(0, Elapsed(clock, 7, host: 0.1), 6);
+            Assert.Equal(2.004, Elapsed(clock, 8, host: 3.8), 6);
+            Assert.Equal(0, Elapsed(clock, 8, host: 0.1), 6);
+            Assert.Equal(2.004, Elapsed(clock, 9, host: 0.1), 6);
         }
 
         [Fact]
@@ -42,9 +43,78 @@ namespace RapidTrigger.Tests
             clock.TryElapsed(Report(10), 0, Resync, out _);
 
             Assert.Equal(3 * 2.004, Elapsed(clock, 13), 6);
-            Assert.Equal(1.002, Elapsed(clock, 13), 6);
             Assert.Equal(0, Elapsed(clock, 13), 6);
-            Assert.Equal(2 * 2.004 - 1.002, Elapsed(clock, 15), 6);
+            Assert.Equal(0, Elapsed(clock, 13), 6);
+            Assert.Equal(2 * 2.004, Elapsed(clock, 15), 6);
+        }
+
+        // Real PTK-670 data, ~1.5% of samples: the new pressure arrives one report after the counter step.
+        // Per report (S = counter stepped, p = pressure changed): [S p][. _][S _][. p][. _][S p].
+        // Counters are relative to the last report before the pattern.
+        private static readonly (int Steps, uint Pressure)[] OutOfPhase =
+        {
+            (1, 5000), (0, 5000), (1, 5000), (0, 4975), (0, 4975), (1, 4950),
+        };
+
+        // A hold at ~5000 for 300 ms, one new sample (5000 / 5001 alternating) per counter step, every 2nd report.
+        private static IEnumerable<(int Steps, uint Pressure)> Hold()
+            => Enumerable.Range(0, 300).Select(i => (i % 2 == 0 ? 1 : 0, (uint)(5000 + i / 2 % 2)));
+
+        /// <summary>Runs reports through the clock; returns each report's elapsed time.</summary>
+        private static List<double> ClockTimes(IEnumerable<(int Steps, uint Pressure)> reports)
+        {
+            var clock = new FirmwareSampleClock();
+            int counter = 0;
+            clock.TryElapsed(Report(counter), 0, Resync, out _);
+            return reports.Select(r => Elapsed(clock, counter += r.Steps)).ToList();
+        }
+
+        [Fact]
+        public void SampleArrivingOneReportAfterTheCounterStepStillGetsExactly2004Ms()
+        {
+            // Sum the time per pressure sample the way the engine does: a report with the last sample's pressure adds
+            // its time to the next sample. The pattern's first report brings 5000 after a 5001 sample.
+            var reports = new[] { (0, 5001u) }.Concat(OutOfPhase).ToArray();
+            var times = ClockTimes(reports);
+            var sampleTimes = new List<double>();
+            double pending = 0;
+            for (int i = 1; i < reports.Length; i++)
+            {
+                pending += times[i];
+                if (reports[i].Item2 != reports[i - 1].Item2)
+                {
+                    sampleTimes.Add(Math.Round(pending, 6));
+                    pending = 0;
+                }
+            }
+
+            // The [S p] sample, the late [. p] one and the next [S p] one: 2.004 ms each. Splitting each period evenly
+            // over the two reports gave the late one 3.006 ms and the next 1.002 ms, half its drag allowance.
+            Assert.Equal(new[] { 2.004, 2.004, 2.004 }, sampleTimes);
+        }
+
+        [Fact]
+        public void SampleAfterALateSampleIsNotJudgedOnHalfAPeriod()
+        {
+            // The hold, then the pattern's two falls of 25. The drag allowance at 5000 is 2 + 0.19% = 11.5 units/ms:
+            // 23 per 2.004 ms sample, so neither fall adds up to Fast Release Distance (10).
+            var reports = Hold().Concat(OutOfPhase).ToList();
+            var times = ClockTimes(reports);
+
+            var engine = new TriggerEngine(new TriggerSettings());
+            engine.Update(0, 1);
+            var events = reports.Select((r, i) => engine.Update(r.Pressure, times[i])).Where(e => e != TriggerEvent.None);
+            Assert.Equal(new[] { TriggerEvent.Contact }, events);
+
+            // The even split's timing for the pattern (1.002, 1.002, 2.004 - 1.002 = 1.002 ... the late sample 3.006 ms
+            // in total, the next one 1.002 ms) releases on the second fall: 25 - 11.5 = 13.5.
+            var even = new TriggerEngine(new TriggerSettings());
+            even.Update(0, 1);
+            foreach (var r in Hold())
+                even.Update(r.Pressure, 1.002);
+            Assert.Equal(TriggerEvent.None, even.Update(5000, 1.002));
+            Assert.Equal(TriggerEvent.None, even.Update(4975, 3.006));
+            Assert.Equal(TriggerEvent.FastRelease, even.Update(4950, 1.002));
         }
 
         [Fact]

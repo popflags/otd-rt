@@ -4,11 +4,15 @@ namespace RapidTrigger
     /// Report timing from the PTK-670 custom firmware's pen-read counter instead of the host clock (opt-in).
     /// <para>
     /// That firmware sends ~1000 reports/s as ID 0x1E reports and samples pen pressure every 2.004 ms. Byte 17 is a
-    /// counter (u8, wraps) that steps by 1 on every report carrying a new pressure sample and repeats on the report in
-    /// between. The host receives reports in bursts: on recordings, two consecutive pressure samples arrived anywhere
-    /// from 0.2 to 4 ms apart, and a sample arriving 0.2 ms after the previous one gets a tenth of its drag allowance in
-    /// the fast-fall detector. This clock gives the engine the tablet's own timing: every report half a sample period,
-    /// a report that skipped samples the time of the samples it skipped. Allocation-free, no OTD dependency.
+    /// counter (u8, wraps) that steps by 1 on every pen read (2.004 ms) and repeats on the report in between. The host
+    /// receives reports in bursts: on recordings, two consecutive pressure samples arrived anywhere from 0.2 to 4 ms
+    /// apart, and a sample arriving 0.2 ms after the previous one gets a tenth of its drag allowance in the fast-fall
+    /// detector. This clock gives the engine the tablet's own timing: each report gets the counter steps it carries
+    /// × 2.004 ms (0 when the counter did not step). The engine adds repeated reports' time to the next pressure sample,
+    /// so every sample gets an exact multiple of 2.004 ms: the counter difference since the previous sample's report.
+    /// That holds even when the new pressure arrives one report after the counter step (~1.5% of samples on real data);
+    /// splitting each period evenly over the two reports gave those samples 3.006 ms and the next one 1.002 ms.
+    /// Allocation-free, no OTD dependency.
     /// </para>
     /// <para>
     /// If the firmware changes and the counter no longer means this, its time drifts from the host clock: once the two
@@ -28,9 +32,6 @@ namespace RapidTrigger
         private int _counter = -1;
         private double _checkHostMs;
         private double _checkFirmwareMs;
-
-        // The report after the last sample already got its half period.
-        private bool _halfGiven;
 
         /// <summary>The counter's time disagreed with the host clock; host time is used from then on.</summary>
         public bool Mismatch { get; private set; }
@@ -55,23 +56,12 @@ namespace RapidTrigger
             _counter = raw[CounterByte];
             if (last < 0 || hostElapsedMs >= resyncMs)
             {
-                _halfGiven = false;
                 _checkHostMs = 0;
                 _checkFirmwareMs = 0;
                 return false;
             }
 
-            int steps = (byte)(_counter - last);
-            if (steps == 0)
-            {
-                elapsedMs = _halfGiven ? 0 : SampleMs / 2;
-                _halfGiven = true;
-            }
-            else
-            {
-                elapsedMs = steps * SampleMs - (_halfGiven ? SampleMs / 2 : 0);
-                _halfGiven = false;
-            }
+            elapsedMs = (byte)(_counter - last) * SampleMs;
 
             _checkHostMs += hostElapsedMs;
             _checkFirmwareMs += elapsedMs;
@@ -93,7 +83,6 @@ namespace RapidTrigger
         public void Reset()
         {
             _counter = -1;
-            _halfGiven = false;
             _checkHostMs = 0;
             _checkFirmwareMs = 0;
         }
