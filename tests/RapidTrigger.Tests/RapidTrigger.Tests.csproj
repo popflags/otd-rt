@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\RapidTrigger\TriggerEngine.cs" Link="TriggerEngine.cs" />
+    <Compile Include="..\..\src\RapidTrigger\FirmwareSampleClock.cs" Link="FirmwareSampleClock.cs" />
     <Compile Include="..\..\src\AnglePreservingSensitivity\DirectionalScale.cs" Link="DirectionalScale.cs" />
   </ItemGroup>
 

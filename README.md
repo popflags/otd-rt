@@ -1,14 +1,19 @@
 # Rapid Trigger for OpenTabletDriver
 
 Rapid trigger for the pen tip on OpenTabletDriver 0.6.x (built against 0.6.7), tuned for high report rate tablets
-(developed on a Wacom PTK-670 sending 1000 reports/s, with a new pressure sample every 5 ms on current firmware, ~9 ms before). Taps press and release as early as the pressure
+(developed on a Wacom PTK-670 with custom firmware: ~1000 reports/s, a new pressure sample every 2 ms since
+2026-10-14; every 5 ms and ~9 ms on earlier firmware). Taps press and release as early as the pressure
 signal allows, while drags stay held through normal pressure wobble.
 
 > Rapid trigger can trip anti-cheats or break game rules. Use at your own risk.
 
 ## How it works
 
-Every tablet report goes through a small state machine (`src/RapidTrigger/TriggerEngine.cs`).
+Every pressure sample goes through a small state machine (`src/RapidTrigger/TriggerEngine.cs`). Tablets that
+report faster than they sample pressure repeat the last value in between (the PTK-670 firmware sends each
+sample on one report and repeats it on the next). A report with exactly the last sample's pressure is not a
+new sample: it changes nothing and its time goes to the next sample, so a repeated stream behaves exactly like
+the samples alone, and a tablet with a new value on every report is unaffected.
 
 **Press**
 - *Contact*: from a lifted pen, the first report at or above **Contact Threshold** presses. Nothing
@@ -24,9 +29,7 @@ Every tablet report goes through a small state machine (`src/RapidTrigger/Trigge
 - *Fast-fall detector (CUSUM)*: each new pressure sample adds its fall minus what a drag could fall
   since the previous sample: (**Fast Fall Speed** + **Fast Fall Percent** of the pressure) × elapsed ms.
   The allowance grows with pressure because hand wobble grows with force, so heavy holds stay down
-  while lighter re-presses without lifting still release. Reports that repeat the last pressure value
-  are not new samples: the PTK-670 on 1000 Hz firmware repeats each value for 5 reports (~9 on older firmware). Rises and
-  slow falls drain it back to zero. It releases once the excess reaches **Fast Release Distance**.
+  while lighter re-presses without lifting still release. Rises and slow falls drain it back to zero. It releases once the excess reaches **Fast Release Distance**.
   Drag dips are slower than the allowance, so they never add up. A real release starts counting the moment it gets faster than any
   drag, with no smoothing lag. This is Page's CUSUM change detector, the standard quickest-detection
   method for a change in slope.
@@ -83,14 +86,21 @@ Restart OpenTabletDriver. Then, in the Filters tab:
 
 ## Tuning: record, then calibrate
 
-Defaults are a starting point. They come from a 108 s gameplay recording on the PTK-670 (taps and
-~600 ms holds, `recordings/`), an old 300 Hz log and synthetic drags and taps; your hand, nib and
-firmware decide the real numbers. The defaults lean towards speed: fast releases and shallow
+Defaults are a starting point. They come from gameplay recordings on the PTK-670 with pressure sampled every
+5 and ~9 ms (`recordings/`), an old 300 Hz log and synthetic drags and taps; your hand, nib and
+firmware decide the real numbers. **On the 2026-10-14 firmware (pressure every 2 ms) they are too sensitive**:
+the drag allowance is per ms, so each 2 ms sample gets less than half the slack a 5 ms sample had against the
+same sensor noise, and the `mixed-*-500hz` recordings show many releases and re-presses inside strokes. Record
+labelled drag and tap sessions (below) and recalibrate. The defaults lean towards speed: fast releases and shallow
 re-presses without lifting, at the cost of harsh drags (fast 30% dips) possibly cutting out. For
 steadier drags raise Fast Fall Percent (0.3–0.4); if light-pressure drags cut out, raise Fast Fall
 Speed to 1.5. If `rt replay` shows pressure changing every report
 (true 1000 Hz pressure sampling), sensor noise adds up in the fast detector: use Fast Fall Speed 20,
 Fast Fall Percent 0 and Fast Release Distance 40.
+
+On that firmware also try **Firmware Sample Clock**: the PC receives the reports in bursts, so by the host clock
+consecutive pressure samples land 0.2–4 ms apart instead of 2, and a sample that arrives early gets only a
+fraction of its drag allowance. The firmware's sample counter (byte 17 of its 0x1E reports) gives the real timing.
 
 1. Enable **Enable Diagnostics**. Each time the filter is applied, it writes
    `~/rapid-trigger-logs/rt-<time>.csv` (Windows: `C:\Users\<you>\rapid-trigger-logs\`).
@@ -116,7 +126,10 @@ Fast Fall Percent 0 and Fast Release Distance 40.
 the pressure sample interval, presses, releases (fast / distance / lift), release timing from the
 start of each descent, release lead before the lift (larger = earlier; for strokes that end in a lift),
 cut-outs (meaningful for drag logs, and for any log where every stroke is one press), missed taps
-(meaningful for tap logs) and a sensor-noise estimate. Old `Timestamp,X,Y,Pressure` logs are accepted too.
+(meaningful for tap logs) and a sensor-noise estimate (from pressure samples, repeats skipped). It replays with
+the time the plugin's engine was given (`engine_ms` in newer diagnostics, otherwise `t_ms` capped at 50 ms per
+report, like the plugin), so a replay makes the same decisions as the driver did. Old `Timestamp,X,Y,Pressure`
+logs are accepted too.
 
 ## Settings
 
@@ -136,6 +149,7 @@ cut-outs (meaningful for drag logs, and for any log where every stroke is one pr
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |
 | Press Drift Time Constant | 0 ms | Ignores slow creep while released. 0 = off. |
 | Hold Time / Hold Release Multiplier | 150 ms / 1 | Scale both release distances up for long presses. 1 = off. |
+| Firmware Sample Clock | off | PTK-670 custom firmware only: time pressure samples by the tablet's counter (byte 17 of 0x1E reports, 2.004 ms per sample) instead of report arrival, which is bursty. Other reports use host time; switches itself off (warning in the log) if the counter stops matching the host clock. |
 | Preserve Pressure | off | Pass real pressure instead of full pressure while pressed. |
 | Enable Diagnostics / Diagnostics Directory | off / `~/rapid-trigger-logs` | Per-report CSV for replay and calibration. |
 
@@ -163,7 +177,7 @@ mode: there the post-transform position is a screen position, not a movement.
 src/RapidTrigger/         plugin (TriggerEngine.cs has no OpenTabletDriver dependency)
 src/AnglePreservingSensitivity/  separate relative-mode plugin (DirectionalScale.cs is OTD-free)
 tools/RtTool/             replay + calibration CLI, compiles the same TriggerEngine.cs
-tests/RapidTrigger.Tests/ engine tests on synthetic 1000 Hz signals
+tests/RapidTrigger.Tests/ engine tests on synthetic 1 kHz report streams (pressure every 1, 2, 5 or 9 reports)
 tools/synth_logs.py       synthetic drag/tap logs for experiments
 recordings/               real recordings for replay and calibration
 ```

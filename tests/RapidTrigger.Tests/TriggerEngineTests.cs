@@ -241,6 +241,65 @@ namespace RapidTrigger.Tests
             Assert.Empty(Signals.Run(engine, Signals.Samples(9, 7200, 7093, 6986, 6879)));
         }
 
+        // 2026-10-14 firmware: ~1 kHz reports, a new pressure sample on every 2nd report, repeated on the next one.
+        private static double[] PressureSignal(string name) => name switch
+        {
+            "taps" => Signals.Ramp(0, 1500, 20).Concat(Signals.Taps(1500, 4500, 12, 60)).ToArray(),
+            "shallow" => Signals.Ramp(0, 4000, 20).Concat(Signals.Taps(4000, 4450, 12, 120)).ToArray(),
+            "lifted" => Enumerable.Range(0, 8)
+                .SelectMany(k => Signals.Ramp(0, 3000 + 300 * k, 12).Concat(Signals.Hold(3000 + 300 * k, 30 + 5 * k))
+                    .Concat(Signals.Ramp(3000 + 300 * k, 0, 18)).Concat(Signals.Hold(0, 25)))
+                .ToArray(),
+            "harsh drag" => Signals.Ramp(0, 5000, 60).Concat(Signals.Drag(5000, 5000, 0.30, 400, 0.03, 15, seed: 1))
+                .Concat(Signals.Ramp(5000, 0, 100)).ToArray(),
+            _ => throw new ArgumentException(name),
+        };
+
+        private static TriggerSettings? NamedSettings(string name) => name switch
+        {
+            "defaults" => null,
+            "every report" => EveryReportSampled(),
+            // Fast detector off: only the slow path (drifting hold reference, 300 below it) releases.
+            "slow path" => new TriggerSettings { FastFallSpeed = 0, FastFallPercent = 0, ReleaseDistance = 300, DriftTimeConstant = 20 },
+            _ => throw new ArgumentException(name),
+        };
+
+        [Theory]
+        [InlineData("taps", "defaults")]
+        [InlineData("shallow", "defaults")]
+        [InlineData("lifted", "defaults")]
+        [InlineData("harsh drag", "defaults")]
+        [InlineData("taps", "every report")]
+        [InlineData("harsh drag", "every report")]
+        [InlineData("taps", "slow path")]
+        [InlineData("harsh drag", "slow path")]
+        public void RepeatedSamplesGiveTheSameEventsAsTheSamplesAlone(string name, string settings)
+        {
+            var signal = PressureSignal(name);
+            TriggerEngine Fresh() => Engine(NamedSettings(settings));
+
+            var repeated = Signals.Run(Fresh(), Signals.SampleAndHold(signal, 2), 1.0);
+            var samples = Signals.Run(Fresh(), Signals.SamplesOnly(signal, 2), 2.0);
+
+            Assert.NotEmpty(samples);
+            Assert.All(repeated, e => Assert.Equal(0, e.Index % 2));
+            Assert.Equal(samples, repeated.Select(e => (e.Index / 2, e.Event)).ToList());
+        }
+
+        [Fact]
+        public void DragWithPressureEvery2ndReportDoesNotCutOut()
+        {
+            // 10% dips over 400 ms + 1.5% tremor at 5000 with +-5 noise per sample (sigma 2.9; the 2026-10-14 recordings
+            // show 2.4-3.6 with hand motion included), one new pressure value every 2nd report.
+            var engine = Engine();
+            Signals.Run(engine, Signals.SampleAndHold(Signals.Ramp(0, 5000, 60), 2));
+
+            var events = Signals.Run(engine, Signals.SampleAndHold(Signals.Drag(5000, 8000, 0.10, 400, 0.015, 5, seed: 4), 2));
+
+            Assert.Empty(events);
+            Assert.True(engine.Pressed);
+        }
+
         [Fact]
         public void RealTapReleasesOnItsFirstFallingSample()
         {
@@ -414,8 +473,9 @@ namespace RapidTrigger.Tests
             var engine = Engine(settings);
             Signals.Run(engine, Signals.Hold(3000, 200));
 
-            Assert.Equal(500, engine.CurrentReleaseDistance, 3);
+            // The 199 repeated reports count as hold time once the next sample arrives.
             Assert.Equal(TriggerEvent.None, engine.Update(2600, 1));
+            Assert.Equal(500, engine.CurrentReleaseDistance, 3);
             Assert.Equal(TriggerEvent.Release, engine.Update(2500, 1));
         }
 

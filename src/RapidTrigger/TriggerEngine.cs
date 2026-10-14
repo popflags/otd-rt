@@ -116,8 +116,14 @@ namespace RapidTrigger
     /// Rapid trigger state machine. Call <see cref="Update"/> once per tablet report with the raw pressure and the
     /// time since the previous report. Allocation-free.
     /// <para>
+    /// The state machine runs on pressure <em>samples</em>, not reports. Tablets that report faster than they sample
+    /// pressure repeat the last value in between (PTK-670 custom firmware: ~1 kHz reports, a new pressure value every
+    /// 2nd report). A report whose pressure equals the last sample exactly only adds its time to the next sample, so a
+    /// repeated stream gives the same events as the samples alone, and a tablet that samples every report is unaffected.
+    /// </para>
+    /// <para>
     /// While pressed, two detectors run side by side:
-    /// a fast-fall detector (one-sided CUSUM on the per-report fall, minus a drag speed allowance) that releases
+    /// a fast-fall detector (one-sided CUSUM on the per-sample fall, minus a drag speed allowance) that releases
     /// taps as soon as the fall is provably faster than a drag, and a slow path (fall below a drifting hold
     /// reference) that catches slower deliberate releases while absorbing slow drag dips.
     /// </para>
@@ -129,8 +135,10 @@ namespace RapidTrigger
         // Pressed: hold reference (drifting peak). Released: trough (lowest pressure since release).
         private double _anchor;
         private double _previousPressure;
-        private double _sinceChangeMs;
         private bool _fresh = true;
+
+        // Time of repeated reports since the last sample, handed to the state machine with the next sample.
+        private double _pendingMs;
 
         // Time a suspected phantom contact has lasted; negative = none pending.
         private double _phantomMs = -1;
@@ -153,16 +161,16 @@ namespace RapidTrigger
         /// <summary>Hold reference while pressed, trough while released.</summary>
         public double Anchor => _anchor;
 
-        /// <summary>Slow-path release distance on the last pressed report (kept after a release for diagnostics).</summary>
+        /// <summary>Slow-path release distance on the last pressed sample (kept after a release for diagnostics).</summary>
         public double CurrentReleaseDistance { get; private set; }
 
-        /// <summary>Hold reference on the last pressed report (kept after a release for diagnostics).</summary>
+        /// <summary>Hold reference on the last pressed sample (kept after a release for diagnostics).</summary>
         public double HoldReference { get; private set; }
 
         /// <summary>Fast-fall detector state: accumulated fall in excess of the drag allowance.</summary>
         public double FallExcess { get; private set; }
 
-        /// <summary>Time since the current press started, in milliseconds.</summary>
+        /// <summary>Time from the start of the current press to the last sample, in milliseconds.</summary>
         public double HeldTime { get; private set; }
 
         public void Reset()
@@ -170,7 +178,7 @@ namespace RapidTrigger
             Pressed = false;
             _anchor = 0;
             _previousPressure = 0;
-            _sinceChangeMs = 0;
+            _pendingMs = 0;
             _fresh = true;
             _phantomMs = -1;
             _dropoutMs = -1;
@@ -188,21 +196,25 @@ namespace RapidTrigger
 
             double p = pressure;
 
+            // The same pressure as the last sample is the tablet repeating it, not a new sample: nothing changes, its
+            // time goes to the next sample. The two timers (phantom confirmation, dropout) keep running on repeats; a
+            // dropout never sees its zeros as repeats because the last sample stays at the level before the drop.
+            if (p == _previousPressure && _phantomMs < 0 && _dropoutMs < 0)
+            {
+                _pendingMs += elapsedMs;
+                return TriggerEvent.None;
+            }
+
+            elapsedMs += _pendingMs;
+            _pendingMs = 0;
+
             if (Pressed && HoldDropout(p, ref elapsedMs))
                 return TriggerEvent.None;
 
             double previous = _previousPressure;
             _previousPressure = p;
 
-            // Some tablets sample pressure slower than they send reports and repeat the last value in between
-            // (the PTK-670 on 1000 Hz firmware: a new pressure sample every 5 reports, ~9 on older firmware). A change then covers all the
-            // time since the previous change, not just the last report interval.
-            _sinceChangeMs += elapsedMs;
-            double sampleMs = _sinceChangeMs;
-            if (p != previous)
-                _sinceChangeMs = 0;
-
-            return Pressed ? UpdatePressed(p, previous, elapsedMs, sampleMs) : UpdateReleased(p, previous, elapsedMs);
+            return Pressed ? UpdatePressed(p, previous, elapsedMs) : UpdateReleased(p, previous, elapsedMs);
         }
 
         /// <summary>
@@ -278,23 +290,20 @@ namespace RapidTrigger
             return TriggerEvent.None;
         }
 
-        private TriggerEvent UpdatePressed(double p, double previous, double elapsedMs, double sampleMs)
+        private TriggerEvent UpdatePressed(double p, double previous, double elapsedMs)
         {
             var s = _settings;
             HeldTime += elapsedMs;
             double multiplier = HoldMultiplier(HeldTime);
 
-            // Fast path: one-sided CUSUM. Each new pressure sample adds its fall minus what a drag could fall since the
-            // previous sample; rises and slow falls drain it back to zero. Repeated values are not new samples.
+            // Fast path: one-sided CUSUM. Each pressure sample adds its fall minus what a drag could fall since the
+            // previous sample; rises and slow falls drain it back to zero.
             bool fastDetector = s.FastFallSpeed > 0 || s.FastFallPercent > 0;
             bool fastFallBuilding = false;
             if (fastDetector)
             {
-                if (p != previous)
-                {
-                    double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
-                    FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * sampleMs);
-                }
+                double allowance = s.FastFallSpeed + s.FastFallPercent * 0.01 * previous;
+                FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * elapsedMs);
                 fastFallBuilding = FallExcess > 0;
             }
 

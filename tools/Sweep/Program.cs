@@ -13,7 +13,7 @@
 //   light: cut-outs on synthetic light drags (500/750/1000, 10% dips over 300 ms, 1.5% tremor at 9 Hz), or with
 //          --medium on medium drags (2500/5000, 15% dips, 2% tremor); noise +-N per sample (--light-noise, default 10)
 //   syn_drag: cut-outs on the harsh synthetic drags of tools/synth_logs.py, sampled every --ms
-// Synthetic signals are sampled every --ms (default 5, the PTK-670's current pressure interval).
+// Synthetic signals are sampled every --ms (default 5; the PTK-670 samples pressure every 2 ms since 2026-10-14: --ms=2).
 using System.Globalization;
 using RapidTrigger;
 using RtTool;

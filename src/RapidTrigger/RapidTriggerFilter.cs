@@ -18,8 +18,13 @@ namespace RapidTrigger
 
         private TriggerEngine? _engine;
         private DiagnosticsRecorder? _recorder;
+        private readonly FirmwareSampleClock _sampleClock = new();
+        private bool _mismatchLogged;
         private uint _maxPressure = 8191;
         private long _lastTicks;
+
+        // Sum of the elapsed times given to the engine (recorded so a replay sees the same timing).
+        private double _engineMs;
 
         public event Action<IDeviceReport>? Emit;
 
@@ -46,6 +51,9 @@ namespace RapidTrigger
                 long now = Stopwatch.GetTimestamp();
                 double elapsed = _lastTicks == 0 ? 0 : Math.Min((now - _lastTicks) * TickToMs, MaxElapsedMs);
                 _lastTicks = now;
+                if (UseFirmwareSampleClock)
+                    elapsed = SampleClockElapsed(value, elapsed);
+                _engineMs += elapsed;
 
                 uint raw = report.Pressure;
                 var ev = _engine.Update(raw, elapsed);
@@ -55,14 +63,28 @@ namespace RapidTrigger
                 else
                     report.Pressure = 0;
 
-                _recorder?.Record(now, raw, _engine, ev);
+                _recorder?.Record(now, _engineMs, raw, _engine, ev);
             }
             else if (value is OutOfRangeReport)
             {
                 _engine?.Reset();
+                _sampleClock.Reset();
             }
 
             Emit?.Invoke(value);
+        }
+
+        private double SampleClockElapsed(IDeviceReport report, double hostElapsed)
+        {
+            if (_sampleClock.TryElapsed(report.Raw, hostElapsed, MaxElapsedMs, out double elapsed))
+                return Math.Min(elapsed, MaxElapsedMs);
+
+            if (_sampleClock.Mismatch && !_mismatchLogged)
+            {
+                _mismatchLogged = true;
+                Log.Write("Rapid Trigger", "Firmware Sample Clock disagrees with the host clock (firmware changed?); using host time.", LogLevel.Warning);
+            }
+            return hostElapsed;
         }
 
         private TriggerEngine CreateEngine()
@@ -196,6 +218,13 @@ namespace RapidTrigger
         [Property("Hold Release Multiplier"), DefaultPropertyValue(1.0), ToolTip(
             "Release distance multiplier for long presses (drags/holds). Taps stay fast. 1 = off.")]
         public double HoldReleaseMultiplier { set; get; } = 1;
+
+        [BooleanProperty("Firmware Sample Clock", ""), DefaultPropertyValue(false), ToolTip(
+            "PTK-670 custom firmware only (0x1E reports, pressure every 2.004 ms, sample counter in byte 17).\n" +
+            "Times pressure samples by the tablet's counter instead of when the reports reach the PC, which arrive in\n" +
+            "bursts (samples 0.2-4 ms apart instead of 2). Falls back to host time for other reports, and for good if the\n" +
+            "counter stops matching the host clock (logged as a warning).")]
+        public bool UseFirmwareSampleClock { set; get; }
 
         [BooleanProperty("Preserve Pressure", ""), DefaultPropertyValue(false), ToolTip(
             "Off: while pressed, report full pressure so the tip binding fires on the very first pressed report.\n" +

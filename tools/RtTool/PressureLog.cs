@@ -40,11 +40,16 @@ namespace RtTool
 
             if (header.StartsWith("t_ms", StringComparison.OrdinalIgnoreCase))
             {
+                // Newer diagnostics also record engine_ms, the time the engine was given (capped, or the firmware sample
+                // clock): replay with it so the replay sees the driver's timing.
+                int timeColumn = Array.FindIndex(header.Split(','), c => c.Trim().Equals("engine_ms", StringComparison.OrdinalIgnoreCase));
+                if (timeColumn < 0)
+                    timeColumn = 0;
                 foreach (var line in lines.Skip(1))
                 {
                     var parts = line.Split(',');
-                    if (parts.Length >= 2
-                        && double.TryParse(parts[0], NumberStyles.Float, culture, out var t)
+                    if (parts.Length > Math.Max(1, timeColumn)
+                        && double.TryParse(parts[timeColumn], NumberStyles.Float, culture, out var t)
                         && uint.TryParse(parts[1], NumberStyles.Integer, culture, out var p))
                     {
                         times.Add(t);

@@ -53,8 +53,9 @@ namespace RapidTrigger.Tests
         }
 
         /// <summary>
-        /// Repeats every <paramref name="reports"/>-th value for the following reports, like the PTK-670 on 1000 Hz
-        /// firmware: 1000 reports/s but a new pressure sample only every ~9 ms.
+        /// Repeats every <paramref name="reports"/>-th value for the following reports, like the PTK-670 custom
+        /// firmware: ~1000 reports/s but a new pressure sample only every 2nd report (2026-10-14; every 5th or ~9th on
+        /// earlier firmware).
         /// </summary>
         public static IEnumerable<double> SampleAndHold(IEnumerable<double> signal, int reports = 9)
         {
@@ -78,13 +79,28 @@ namespace RapidTrigger.Tests
             }
         }
 
+        /// <summary>Only every <paramref name="reports"/>-th value: the pressure samples of a stream that repeats them.</summary>
+        public static IEnumerable<double> SamplesOnly(IEnumerable<double> signal, int reports)
+        {
+            int i = 0;
+            foreach (double v in signal)
+            {
+                if (i++ % reports == 0)
+                    yield return v;
+            }
+        }
+
         public static List<(int Index, TriggerEvent Event)> Run(TriggerEngine engine, IEnumerable<double> signal, int startIndex = 0)
+            => Run(engine, signal, Period, startIndex);
+
+        /// <summary>Feeds one value per report, <paramref name="elapsedMs"/> apart.</summary>
+        public static List<(int Index, TriggerEvent Event)> Run(TriggerEngine engine, IEnumerable<double> signal, double elapsedMs, int startIndex = 0)
         {
             var events = new List<(int, TriggerEvent)>();
             int i = startIndex;
             foreach (double v in signal)
             {
-                var ev = engine.Update((uint)Math.Max(0, Math.Round(v)), Period);
+                var ev = engine.Update((uint)Math.Max(0, Math.Round(v)), elapsedMs);
                 if (ev != TriggerEvent.None)
                     events.Add((i, ev));
                 i++;

@@ -9,10 +9,13 @@ syn_tap.csv:  60 rapid taps without lifting (random 800-2000 trough, 3000-6000 p
 These are made up, harsher than typical drags on purpose. Real recordings from the tablet
 (recordings/) always take priority. Output is in the plugin's diagnostics CSV format.
 
---sample-ms N holds each pressure value for N reports, like the PTK-670 on 1000 Hz firmware, which
-sends 1000 reports/s but samples pressure only every ~9 ms. Default 1 (a new value every report).
+--sample-ms N holds each pressure value for N reports (1 ms each), like the PTK-670 custom firmware: ~1000
+reports/s with a new pressure sample every 2nd report since 2026-10-14 (--sample-ms 2; every 5th or ~9th on
+earlier firmware). Default 1 (a new value every report).
+--samples-only (with --sample-ms N) writes only the reports that carry a new sample, N ms apart: the same
+pressure samples without the repeats. Replaying both must give the same events.
 
-Usage: python3 tools/synth_logs.py [output_dir] [--sample-ms N]
+Usage: python3 tools/synth_logs.py [output_dir] [--sample-ms N] [--samples-only]
 """
 import math
 import os
@@ -20,12 +23,16 @@ import random
 import sys
 
 
-def write(path, values, sample_ms=1):
-    values = [values[i - i % sample_ms] for i in range(len(values))]
+def write(path, values, sample_ms=1, samples_only=False):
+    if samples_only:
+        rows = [(i, values[i]) for i in range(0, len(values), sample_ms)]
+    else:
+        rows = [(i, values[i - i % sample_ms]) for i in range(len(values))]
     with open(path, "w") as f:
         f.write("t_ms,raw,pressed,event,anchor,hold_reference,release_distance,fall_excess\n")
-        for i, v in enumerate(values):
-            f.write(f"{i:.3f},{max(0, round(v))},0,0,0,0,0,0\n")
+        for t, v in rows:
+            f.write(f"{t:.3f},{max(0, round(v))},0,0,0,0,0,0\n")
+    return len(rows)
 
 
 def ramp(a, b, n):
@@ -51,6 +58,9 @@ def main():
         k = args.index("--sample-ms")
         sample_ms = int(args[k + 1])
         del args[k:k + 2]
+    samples_only = "--samples-only" in args
+    if samples_only:
+        args.remove("--samples-only")
     out_dir = args[0] if args else "."
     os.makedirs(out_dir, exist_ok=True)
 
@@ -59,7 +69,7 @@ def main():
                                                               (7000, .20, 500, .03), (1200, .35, 250, .02)]):
         d += ramp(0, level, 60) + drag(level, 4000, dip_fraction, dip_ms, tremor, 15, k)
         d += ramp(level, 0, max(10, int(level / 50))) + [0] * 200
-    write(os.path.join(out_dir, "syn_drag.csv"), d, sample_ms)
+    drag_rows = write(os.path.join(out_dir, "syn_drag.csv"), d, sample_ms, samples_only)
 
     t = [0] * 50 + ramp(0, 1500, 20)
     r = random.Random(9)
@@ -67,9 +77,9 @@ def main():
         hi, lo, n = r.uniform(3000, 6000), r.uniform(800, 2000), int(r.uniform(50, 90))
         t += [lo + (hi - lo) * 0.5 * (1 - math.cos(2 * math.pi * i / n)) + (r.random() * 2 - 1) * 15 for i in range(n)]
     t += ramp(1500, 0, 30) + [0] * 100
-    write(os.path.join(out_dir, "syn_tap.csv"), t, sample_ms)
+    tap_rows = write(os.path.join(out_dir, "syn_tap.csv"), t, sample_ms, samples_only)
 
-    print(f"wrote {out_dir}/syn_drag.csv ({len(d)} samples) and {out_dir}/syn_tap.csv ({len(t)} samples)")
+    print(f"wrote {out_dir}/syn_drag.csv ({drag_rows} rows) and {out_dir}/syn_tap.csv ({tap_rows} rows)")
 
 
 if __name__ == "__main__":

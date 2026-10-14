@@ -39,6 +39,9 @@ static void PrintUsage()
 
         Record logs with "Enable Diagnostics" in the plugin (written to ~/rapid-trigger-logs).
         Legacy "Timestamp,X,Y,Pressure" logs and plain one-value-per-line logs are also accepted.
+        Replays use the time the plugin's engine was given (engine_ms column when present, otherwise
+        t_ms with each report capped at 50 ms like the plugin). Reports repeating the last pressure
+        value are not new samples; statistics (noise, start of a descent) use samples only.
 
         rt replay <log>... [--set Name=Value]... [--events] [--rate Hz]
             Run the plugin logic over each log and print presses, releases, release timing,

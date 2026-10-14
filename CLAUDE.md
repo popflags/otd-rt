@@ -8,10 +8,12 @@ useful from them is summarized below.
 ## Owner and goal
 
 - Owner (GitHub `popflags`) plays rhythm/aim games with a **Wacom PTK-670 (Intuos Pro M, 2025)** running
-  **custom firmware at 1000 Hz** (1000 reports/s, but **pressure is sampled only every 5 ms** since a firmware
-  change on 2026-10-05: each value is repeated for 5 reports, `recordings/play-ptk670-5ms-20261005.csv`; before
-  that every ~9 ms, `recordings/play-ptk670-20261001.csv`), on OpenTabletDriver (OTD) **0.6.7** (latest release; plugin targets it). Develops on Linux (CachyOS) locally
-  and on Windows through Claude Code in the cloud (no IDE on Windows).
+  **custom firmware**: since 2026-10-14 **~998 reports/s with pen pressure sampled at 500 Hz** (every 2.004 ms):
+  each new value appears on one report and is repeated exactly on the next (`recordings/mixed-*-500hz-20261014.csv`).
+  Before: pressure every 5 ms (2026-10-05, `recordings/play-ptk670-5ms-20261005.csv`) and every ~9 ms
+  (`recordings/play-ptk670-20261001.csv`), 1000 reports/s. On OpenTabletDriver (OTD) **0.6.7** (latest release;
+  plugin targets it). Develops on Linux (CachyOS) locally and on Windows through Claude Code in the cloud (no IDE
+  on Windows).
 - Requirements, in the owner's words: initial press as fast as possible, release as fast as possible,
   taps as fast as possible, "compromise as little as possible". **Drags must never cut out** (tip held
   down while moving must not release and re-press mid-drag) in normal use. Both early releases and
@@ -24,12 +26,13 @@ useful from them is summarized below.
 ```
 src/RapidTrigger/TriggerEngine.cs        the whole algorithm, no OTD dependency, allocation-free
 src/RapidTrigger/RapidTriggerFilter.cs   OTD 0.6 filter: properties, timing, output pressure, diagnostics
-src/RapidTrigger/DiagnosticsRecorder.cs  per-report CSV via Channel + background thread
+src/RapidTrigger/DiagnosticsRecorder.cs  per-report CSV via Channel + background thread (t_ms host time, engine_ms engine time)
+src/RapidTrigger/FirmwareSampleClock.cs  opt-in report timing from the PTK-670 firmware's byte-17 sample counter, OTD-free
 src/AnglePreservingSensitivity/          separate plugin DLL, own version: relative-mode direction-preserving X:Y speed
 tools/RtTool/                            `rt` CLI: replay + calibrate; compiles TriggerEngine.cs via <Compile Link>
 tools/Sweep/                             `sweep` CLI: scores settings grids on recordings + synthetic signals (how defaults are chosen)
-tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1000 Hz data)
-tests/RapidTrigger.Tests/                xunit tests on synthetic 1000 Hz signals (Signals.cs)
+tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1 kHz reports; --sample-ms N repeats, --samples-only)
+tests/RapidTrigger.Tests/                xunit tests on synthetic 1 kHz report streams (Signals.cs), FirmwareSampleClock tests
 recordings/                              real diagnostics CSVs from the tablet (commit them here)
 scripts/cloud-setup.sh                   SessionStart hook: installs the .NET 8 SDK in cloud sessions
 .github/workflows/ci.yml                 build + test + replay recordings on every push, uploads DLL artifact
@@ -92,16 +95,36 @@ yet (cloud sessions cannot push tags). Pushing a `v*` tag by hand still works. C
 - Out-of-range: `OutOfRangeReport` (struct, namespace `OpenTabletDriver.Plugin.Tablet`). The binding
   handler only releases *pen buttons* on it, not the tip.
 - PTK-670 config (0.6.7): `MaxPressure` 8191, digitizer 52600×29600, parser
-  `OpenTabletDriver.Configurations.Parsers.Wacom.IntuosV3.IntuosV3ReportParser`. `0x1F` reports with
-  `data[1]==0x01` → `IntuosV3Report` (a **struct**: `ITabletReport, IProximityReport, ITiltReport,
-  IEraserReport`, pressure = ushort at byte 7, `HoverDistance` byte 13). Other `0x1F` reports, i.e. out of
-  proximity, become plain `DeviceReport`, not `OutOfRangeReport`. Mutating `Pressure` through the
-  `ITabletReport` interface changes the boxed report in place, which is how the filter works.
+  `OpenTabletDriver.Configurations.Parsers.Wacom.IntuosV3.IntuosV3ReportParser`.
+  - **Custom firmware since 2026-10-14:** reports are ID **0x1E** → `IntuosV3ExtendedReport` (struct, same
+    interfaces): X = bytes 3–5 (24-bit LE), Y = 6–8, pressure = bytes 9–10 (u16 LE), tilt 11–12 / 13–14, status
+    byte 2 (bit 6 = near proximity, bit 5 = eraser), `HoverDistance` byte 19. Out of proximity also arrives as
+    0x1E with NearProximity false and pressure 0 (not a `DeviceReport`/`OutOfRangeReport`). Byte 17 (not parsed
+    by OTD, read from `Raw`) is a pen-read counter: u8, wraps, +1 on every report carrying a new pressure sample,
+    unchanged on the repeat report (each step = 2.004 ms). ~98.5% of pressure changes land on the stepping reports.
+  - Stock firmware (and the custom firmware before 2026-10-14): `0x1F` reports with `data[1]==0x01` →
+    `IntuosV3Report` (pressure = ushort at byte 7, `HoverDistance` byte 13); other `0x1F` reports, i.e. out of
+    proximity, become plain `DeviceReport`.
+  - Both report types are **structs**: mutating `Pressure` through the `ITabletReport` interface changes the boxed
+    report in place, which is how the filter works.
 - There is no timestamp in reports; the filter times reports with `Stopwatch` at `Consume`, capping gaps at 50 ms.
+  The host receives them in **bursts**: on the 2026-10-14 recordings, report intervals are ≤ 0.13 ms for 25% and
+  ≥ 2.8 ms for 10%, and two consecutive pressure samples (always exactly 2 reports apart, none lost while the pen is
+  down) arrive anywhere from 0.2 to 4 ms apart by the host clock (median 1.95). Opt-in **Firmware Sample Clock**
+  (`FirmwareSampleClock`) times 0x1E reports by the byte-17 counter instead: every report 1.002 ms, skipped samples
+  2.004 ms each; host time for other reports, after 50 ms gaps, and for good if the counter's time differs from the
+  host clock by more than ×1.25 over 2 s (warning in the OTD log).
 
 ## The algorithm (TriggerEngine)
 
-Per report: `Update(rawPressure, elapsedMs)`.
+Per report: `Update(rawPressure, elapsedMs)`, but the state machine runs on **pressure samples**: a report whose
+pressure equals the last sample exactly only adds its elapsed time to a pending total and returns None (no state
+changes); the next differing value is processed with pending + its own time. A repeated stream therefore gives the
+same events at the same sample times as the samples alone (`RepeatedSamplesGiveTheSameEventsAsTheSamplesAlone`), and
+a tablet with a new value every report is unaffected. Exceptions, because they are timers: while a phantom contact
+waits for confirmation, repeats are processed (the 8191 level can sit still for 20 ms); during a dropout the zeros
+are never repeats (the last sample stays at the pre-drop level). Constant real pressure (e.g. saturated at 8191) is
+indistinguishable from repeats: its time is carried to the next change.
 
 - **Released:** the trough tracks the minimum (optional `PressDriftTimeConstant` lets it creep up).
   - *Fresh contact* (pressure hit ≤ `LiftThreshold` since the last release): press on the first report
@@ -115,10 +138,10 @@ Per report: `Update(rawPressure, elapsedMs)`.
      pressed). If pressure comes back above lift in that time the zero is ignored (previous pressure stays at
      the pre-drop level, so 8191 → 0 → 3000 is judged as 8191 → 3000); otherwise it releases as Lift. None of
      the three recordings has a pressed stroke falling straight from 8191 to 0, nor a max → 0 → max dropout.
-  2. **FastRelease (CUSUM):** on each report whose pressure *differs* from the previous one,
+  2. **FastRelease (CUSUM):** on each pressure sample,
      `FallExcess = max(0, FallExcess + (prev − p) − (FastFallSpeed + FastFallPercent%·prev)·dt)`, with dt = time since the previous
-     change (repeated values are not new samples; before 2026-10-01 dt was the report interval, which on the
-     PTK-670 made the allowance 9× too small). Release when ≥ `FastReleaseDistance` (× hold multiplier).
+     sample, repeated reports included (before 2026-10-01 dt was the report interval, which on the PTK-670 made the
+     allowance 9× too small; v2.0.1 has that bug). Release when ≥ `FastReleaseDistance` (× hold multiplier).
      Only fall faster than the drag allowance accumulates. No smoothing: it reacts on the first fast sample.
   3. **Release (slow path):** hold reference − p ≥ `ReleaseDistance` (or `ReleaseRatio`·ref, capped by
      `MaxReleaseDistance`, × hold multiplier). The hold reference jumps to new peaks and drifts toward the
@@ -130,6 +153,28 @@ Per report: `Update(rawPressure, elapsedMs)`.
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldTime 150, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**500 Hz pressure firmware (2026-10-14), `recordings/mixed-*-500hz-20261014.csv`:** three unlabelled mixed-use
+recordings (strokes+taps 116 s / 331 strokes, lines+taps 118 s / 267, long drags 174 s / 47 with 7 over 1 s). Host
+timing only (no byte-17 column; `pressed`/`event` columns are 0). 26 one- or two-sample phantom 8191 contacts
+(filtered by 2.3.1) plus one phantom 8191 sample right before a real contact.
+- The change request for this firmware quoted v2.0.1 numbers (per-report CUSUM; 500 Hz-repeated `syn_drag` 3
+  cut-outs vs 0 samples-only; recordings sigma 10.9/6.7/5.4 with repeats counted). On 2.5.1 the CUSUM and
+  `NoiseSigma` already worked per sample: repeated and samples-only synthetic sets gave identical counts, sigma
+  3.6/2.4/2.4. The engine change (repeats change no state at all) and RtTool's per-sample descent start therefore
+  changed no press/release count on any file; only release timing moved by one report (p50 0.9 → 2.8 ms on
+  strokes-taps), because it no longer counts from the repeat report.
+- **Defaults (tuned for 5 ms samples) are far too sensitive here.** Replay with 2.5.1 defaults (contacts / re-presses
+  inside strokes): strokes-taps 331 / 520, lines-taps 250 / 207, long drags 39 / 330. The allowance is per ms, so
+  a 2 ms sample gets 2/5 of a 5 ms sample's slack against the same per-sample noise.
+- **Host-timing jitter adds to it.** Replaying with an ideal report clock (report index × 1.002 ms, real gaps > 5 ms
+  kept; what the Firmware Sample Clock gives) at the same defaults: re-presses 520 → 488, 207 → 143, 330 → 275.
+  Example on strokes-taps at 13.14 s: contact at 2822, FastRelease 4 ms later on a 22-unit dip that arrived a
+  fraction of a ms after the previous sample by the host clock. Not adopted as default (owner's request: generic
+  path stays default) and not measurable on real data until recordings are made with it on (they then carry
+  `engine_ms`).
+- **Open:** recalibrate the defaults for 2 ms samples from labelled `drag-*`/`tap-*` recordings made with this
+  version (Enable Diagnostics on, ideally Firmware Sample Clock on), then `rt calibrate` / `tools/Sweep`.
 
 **5 ms firmware (2026-10-05), `recordings/play-ptk670-5ms-20261005.csv`:** 84 s, recorded with 2.3.x/2.4.0
 defaults. Pressure changes every 5 ms (1000 reports/s). 106 strokes, all lifted: ~93 taps, 13 holds ≥ 300 ms
@@ -295,14 +340,18 @@ Findings that shaped it:
 ### Metrics in RtTool (know their limits)
 
 - *Release timing*: ms from the start of the descent (most recent prominent peak; last sample within
-  max(3σ, 1%) of it) to the release, plus pressure shed. On slow falls, "start of descent" is fuzzy.
+  max(3σ, 1%) of it, counted from the report where that sample first appears, not its repeat) to the release,
+  plus pressure shed. On slow falls, "start of descent" is fuzzy.
+- *Replay timing*: RtTool feeds the engine the `engine_ms` column when the log has it (newer diagnostics: the time
+  the driver's engine was given, including the Firmware Sample Clock), otherwise `t_ms`, capped at 50 ms per row
+  like the filter, so replay = driver.
 - *Cut-outs* (drag logs): a Release/FastRelease followed by a re-press before pressure reaches the lift
   threshold, or no lift within `--lift-window` (300 ms). Meaningful when every stroke is one press (drags,
   or `play-*` logs where the pen lifts after each tap/hold).
 - *Lead before lift*: ms from each stroke-ending release to pressure ≤ lift threshold (larger = earlier).
   Label-free latency metric for logs where strokes end in a lift. Quantized to the 9 ms sample interval.
-- *Pressure sample interval*: median time between pressure changes while pressed (5 ms on the PTK-670 since
-  2026-10-05, 9 ms before).
+- *Pressure sample interval*: median time between pressure changes while pressed (2 ms on the PTK-670 since
+  2026-10-14, 5 ms since 2026-10-05, 9 ms before). On host-timed logs it is a median of jittered 0.2–4 ms gaps.
 - *Missed releases* (tap logs): zigzag swings of ≥ max(400, 35% of peak) whose peak was pressed but which
   never released before the trough. A heuristic: on drag logs it counts dips as "taps".
 - *Noise σ*: 1.4826·median|2nd difference|/√6 over samples > 50, repeated values skipped. On sample-and-hold
@@ -352,7 +401,9 @@ there the plugin degrades towards the plain per-axis ratio (it cannot do worse t
 - `HoverDistance` (IntuosV3 byte 13) could hint at an imminent contact, but any prediction risks false presses.
 - Per-pressure-band thresholds if real drags show noise growing with force (on the play log a pressure-
   proportional fall allowance gained only ~1 ms; see above).
-- Record real drags on the 5 ms firmware and re-run `tools/Sweep` with them (add a drag column).
+- Recalibrate for the 500 Hz firmware: labelled drag/tap recordings (with Firmware Sample Clock on, so `engine_ms`
+  carries the counter timing), then `rt calibrate` and `tools/Sweep` (whose synthetic signals default to 5 ms
+  sampling: run with `--ms=2`). Decide whether Firmware Sample Clock should become the default for this firmware.
 - If the firmware starts sampling pressure every ms, the 2.2.0 defaults are far too sensitive (synthetic 1 kHz
   drags: 238 cut-outs); FastFallSpeed 20 / FastFallPercent 0 / FastReleaseDistance 40 was fine there. `rt replay` prints the sample interval.
 

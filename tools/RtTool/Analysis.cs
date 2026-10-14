@@ -28,6 +28,9 @@ namespace RtTool
 
     public static class Analysis
     {
+        /// <summary>Same cap as RapidTriggerFilter: longer gaps between reports (pen out of range) count as this.</summary>
+        public const double MaxElapsedMs = 50;
+
         public static ReplayResult Replay(PressureLog log, TriggerSettings settings)
         {
             var engine = new TriggerEngine(settings);
@@ -37,7 +40,7 @@ namespace RtTool
             for (int i = 0; i < log.Count; i++)
             {
                 double t = log.Time[i];
-                var ev = engine.Update(log.Pressure[i], t - previous);
+                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs));
                 previous = t;
                 if (ev != TriggerEvent.None)
                     events.Add(new EventRecord(i, t, ev, log.Pressure[i], engine.HoldReference, engine.CurrentReleaseDistance));
@@ -50,6 +53,7 @@ namespace RtTool
         /// Release latency: time from the start of the descent that led to the release, and how much pressure
         /// had been shed by then. The descent starts at the most recent peak that stands out from the samples
         /// before it; within that peak, the last sample close to its maximum is taken (end of a plateau).
+        /// Each pressure sample counts from the report where it first appears, not from reports repeating it.
         /// </summary>
         public static List<ReleaseTiming> ReleaseTimings(ReplayResult result)
         {
@@ -87,7 +91,8 @@ namespace RtTool
                 int fallStart = windowStart;
                 for (int i = windowStart; i <= e.Index; i++)
                 {
-                    if (log.Pressure[i] >= peak - tolerance)
+                    bool repeat = i > 0 && log.Pressure[i] == log.Pressure[i - 1];
+                    if (!repeat && log.Pressure[i] >= peak - tolerance)
                         fallStart = i;
                 }
 
