@@ -8,6 +8,7 @@ namespace RapidTrigger.Tests
     public class FirmwareSampleClockTests
     {
         private const double Resync = 50;
+        private const double P = FirmwareSampleClock.SampleMs;
 
         private static byte[] Report(int counter, byte id = FirmwareSampleClock.ReportId)
         {
@@ -31,9 +32,9 @@ namespace RapidTrigger.Tests
             Assert.False(clock.TryElapsed(Report(7), 0, Resync, out _));
 
             Assert.Equal(0, Elapsed(clock, 7, host: 0.1), 6);
-            Assert.Equal(2.004, Elapsed(clock, 8, host: 3.8), 6);
+            Assert.Equal(P, Elapsed(clock, 8, host: 3.8), 6);
             Assert.Equal(0, Elapsed(clock, 8, host: 0.1), 6);
-            Assert.Equal(2.004, Elapsed(clock, 9, host: 0.1), 6);
+            Assert.Equal(P, Elapsed(clock, 9, host: 0.1), 6);
         }
 
         [Fact]
@@ -42,10 +43,10 @@ namespace RapidTrigger.Tests
             var clock = new FirmwareSampleClock();
             clock.TryElapsed(Report(10), 0, Resync, out _);
 
-            Assert.Equal(3 * 2.004, Elapsed(clock, 13), 6);
+            Assert.Equal(3 * P, Elapsed(clock, 13), 6);
             Assert.Equal(0, Elapsed(clock, 13), 6);
             Assert.Equal(0, Elapsed(clock, 13), 6);
-            Assert.Equal(2 * 2.004, Elapsed(clock, 15), 6);
+            Assert.Equal(2 * P, Elapsed(clock, 15), 6);
         }
 
         // Real PTK-670 data, ~1.5% of samples: the new pressure arrives one report after the counter step.
@@ -88,16 +89,16 @@ namespace RapidTrigger.Tests
                 }
             }
 
-            // The [S p] sample, the late [. p] one and the next [S p] one: 2.004 ms each. Splitting each period evenly
-            // over the two reports gave the late one 3.006 ms and the next 1.002 ms, half its drag allowance.
-            Assert.Equal(new[] { 2.004, 2.004, 2.004 }, sampleTimes);
+            // The [S p] sample, the late [. p] one and the next [S p] one: one period each. Splitting each period evenly
+            // over the two reports gave the late one 1.5 periods and the next half a period: half its drag allowance.
+            Assert.Equal(new[] { P, P, P }, sampleTimes);
         }
 
         [Fact]
         public void SampleAfterALateSampleIsNotJudgedOnHalfAPeriod()
         {
             // The hold, then the pattern's two falls of 25. The drag allowance at 5000 is 2 + 0.19% = 11.5 units/ms:
-            // 23 per 2.004 ms sample, so neither fall adds up to Fast Release Distance (10).
+            // 23 per 2 ms sample, so neither fall adds up to Fast Release Distance (10).
             var reports = Hold().Concat(OutOfPhase).ToList();
             var times = ClockTimes(reports);
 
@@ -106,15 +107,15 @@ namespace RapidTrigger.Tests
             var events = reports.Select((r, i) => engine.Update(r.Pressure, times[i])).Where(e => e != TriggerEvent.None);
             Assert.Equal(new[] { TriggerEvent.Contact }, events);
 
-            // The even split's timing for the pattern (1.002, 1.002, 2.004 - 1.002 = 1.002 ... the late sample 3.006 ms
-            // in total, the next one 1.002 ms) releases on the second fall: 25 - 11.5 = 13.5.
+            // The even split's timing for the pattern (half a period per report; the late sample 1.5 periods in total, the
+            // next one half a period) releases on the second fall: 25 - 11.5 = 13.5.
             var even = new TriggerEngine(new TriggerSettings());
             even.Update(0, 1);
             foreach (var r in Hold())
-                even.Update(r.Pressure, 1.002);
-            Assert.Equal(TriggerEvent.None, even.Update(5000, 1.002));
-            Assert.Equal(TriggerEvent.None, even.Update(4975, 3.006));
-            Assert.Equal(TriggerEvent.FastRelease, even.Update(4950, 1.002));
+                even.Update(r.Pressure, P / 2);
+            Assert.Equal(TriggerEvent.None, even.Update(5000, P / 2));
+            Assert.Equal(TriggerEvent.None, even.Update(4975, 1.5 * P));
+            Assert.Equal(TriggerEvent.FastRelease, even.Update(4950, P / 2));
         }
 
         [Fact]
@@ -123,7 +124,7 @@ namespace RapidTrigger.Tests
             var clock = new FirmwareSampleClock();
             clock.TryElapsed(Report(255), 0, Resync, out _);
 
-            Assert.Equal(2.004, Elapsed(clock, 0), 6);
+            Assert.Equal(P, Elapsed(clock, 0), 6);
         }
 
         [Fact]
@@ -140,13 +141,13 @@ namespace RapidTrigger.Tests
             clock.TryElapsed(Report(3), 1, Resync, out _);
             Assert.False(clock.TryElapsed(Report(200), 50, Resync, out elapsed));
             Assert.Equal(50, elapsed);
-            Assert.Equal(2.004, Elapsed(clock, 201), 6);
+            Assert.Equal(P, Elapsed(clock, 201), 6);
         }
 
         [Fact]
         public void CounterThatDoesNotMatchTheHostClockFallsBackToHostTime()
         {
-            // A firmware where the counter steps on every report: 2.004 ms per 1 ms report.
+            // The counter stepping on every report (an analog pen on 0fc2521a, 1.004 ms per step): 2 ms per 1 ms report.
             var clock = new FirmwareSampleClock();
             clock.TryElapsed(Report(0), 0, Resync, out _);
             int counter = 0;

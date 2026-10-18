@@ -157,7 +157,7 @@ logs are accepted too.
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |
 | Press Drift Time Constant | 0 ms | Ignores slow creep while released. 0 = off. |
 | Hold Time / Hold Release Multiplier | 250 ms / 1 | Ramp time for Tap Allowance; Hold Release Multiplier scales both release distances up for long presses (1 = off). |
-| Firmware Sample Clock | off | PTK-670 custom firmware only: time pressure samples by the tablet's counter (byte 17 of 0x1E reports, 2.004 ms per sample) instead of report arrival, which is bursty. Other reports use host time; switches itself off (warning in the log) if the counter stops matching the host clock. |
+| Firmware Sample Clock | off | PTK-670 custom firmware only: time pressure samples by the tablet's counter (byte 17 of 0x1E reports, 2.000 ms per sample at 1000 Hz motion sync ON) instead of report arrival, which is bursty. Other reports use host time; switches itself off (warning in the log) if the counter stops matching the host clock. |
 | Preserve Pressure | off | Pass real pressure instead of full pressure while pressed. |
 | Enable Diagnostics / Diagnostics Directory | off / `~/rapid-trigger-logs` | Per-report CSV for replay and calibration. |
 

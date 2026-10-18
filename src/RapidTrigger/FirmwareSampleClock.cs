@@ -3,15 +3,19 @@ namespace RapidTrigger
     /// <summary>
     /// Report timing from the PTK-670 custom firmware's pen-read counter instead of the host clock (opt-in).
     /// <para>
-    /// That firmware sends ~1000 reports/s as ID 0x1E reports and samples pen pressure every 2.004 ms. Byte 17 is a
-    /// counter (u8, wraps) that steps by 1 on every pen read (2.004 ms) and repeats on the report in between. The host
+    /// That firmware (production ring500 0fc2521a, 2026-10-18, set to 1000 Hz with motion sync ON: locked to the USB
+    /// frames) sends 1000 ID 0x1E reports/s and samples pen pressure every 2.000 ms. Byte 17 is a counter (u8, wraps)
+    /// that steps by 1 on every pen read (2.000 ms) and repeats on the report in between. The host
     /// receives reports in bursts: on recordings, two consecutive pressure samples arrived anywhere from 0.2 to 4 ms
     /// apart, and a sample arriving 0.2 ms after the previous one gets a tenth of its drag allowance in the fast-fall
     /// detector. This clock gives the engine the tablet's own timing: each report gets the counter steps it carries
-    /// × 2.004 ms (0 when the counter did not step). The engine adds repeated reports' time to the next pressure sample,
-    /// so every sample gets an exact multiple of 2.004 ms: the counter difference since the previous sample's report.
-    /// That holds even when the new pressure arrives one report after the counter step (~1.5% of samples on real data);
-    /// splitting each period evenly over the two reports gave those samples 3.006 ms and the next one 1.002 ms.
+    /// × 2.000 ms (0 when the counter did not step). The engine adds repeated reports' time to the next pressure sample,
+    /// so every sample gets an exact multiple of 2.000 ms: the counter difference since the previous sample's report.
+    /// That holds even when the new pressure arrives one report after the counter step (~1.5% of samples on cdb17e54
+    /// data); splitting each period evenly over the two reports gave those samples 1.5 periods and the next one half.
+    /// Only 1000 Hz motion sync ON is handled. 999 Hz sync OFF samples every 2.004 ms (this clock then runs 0.2% slow,
+    /// negligible); an analog pen steps the counter on every report (1.004 ms), which the host-clock check below catches
+    /// (time runs 2x fast) and falls back to host time.
     /// Allocation-free, no OTD dependency.
     /// </para>
     /// <para>
@@ -24,7 +28,7 @@ namespace RapidTrigger
     {
         public const byte ReportId = 0x1E;
         public const int CounterByte = 17;
-        public const double SampleMs = 2.004;
+        public const double SampleMs = 2.000;
 
         private const double CheckWindowMs = 2000;
         private const double MaxRatio = 1.25;

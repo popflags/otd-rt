@@ -246,7 +246,7 @@ namespace RapidTrigger
         public double HoldReleaseMultiplier { set; get; } = 1;
 
         [BooleanProperty("Firmware Sample Clock", ""), DefaultPropertyValue(false), ToolTip(
-            "PTK-670 custom firmware only (0x1E reports, pressure every 2.004 ms, sample counter in byte 17).\n" +
+            "PTK-670 custom firmware only (0x1E reports, 1000 Hz motion sync ON: pressure every 2.000 ms, counter in byte 17).\n" +
             "Times pressure samples by the tablet's counter instead of when the reports reach the PC, which arrive in\n" +
             "bursts (samples 0.2-4 ms apart instead of 2). Falls back to host time for other reports, and for good if the\n" +
             "counter stops matching the host clock (logged as a warning).")]

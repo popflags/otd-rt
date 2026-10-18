@@ -8,8 +8,10 @@ useful from them is summarized below.
 ## Owner and goal
 
 - Owner (GitHub `popflags`) plays rhythm/aim games with a **Wacom PTK-670 (Intuos Pro M, 2025)** running
-  **custom firmware**: since 2026-10-14 **~998 reports/s with pen pressure sampled at 500 Hz** (every 2.004 ms):
-  each new value appears on one report and is repeated exactly on the next (`recordings/mixed-*-500hz-20261014.csv`).
+  **custom firmware**: since 2026-10-14 **pen pressure sampled at 500 Hz**: each new value appears on one report and
+  is repeated exactly on the next (`recordings/mixed-*-500hz-20261014.csv`). Production since 2026-10-18 is ring500
+  **0fc2521a**, used at **1000 Hz with motion sync ON** (locked to USB frames): 1000 reports/s, a sample every
+  **2.000 ms** (999 Hz sync OFF and the 2026-10-14..17 builds: ~998 reports/s, 2.004 ms).
   Before: pressure every 5 ms (2026-10-05, `recordings/play-ptk670-5ms-20261005.csv`) and every ~9 ms
   (`recordings/play-ptk670-20261001.csv`), 1000 reports/s. On OpenTabletDriver (OTD) **0.6.7** (latest release;
   plugin targets it). Develops on Linux (CachyOS) locally and on Windows through Claude Code in the cloud (no IDE
@@ -112,10 +114,21 @@ yet (cloud sessions cannot push tags). Pushing a `v*` tag by hand still works. C
   ≥ 2.8 ms for 10%, and two consecutive pressure samples (always exactly 2 reports apart, none lost while the pen is
   down) arrive anywhere from 0.2 to 4 ms apart by the host clock (median 1.95). Opt-in **Firmware Sample Clock**
   (`FirmwareSampleClock`) times 0x1E reports by the byte-17 counter instead: each report gets the counter steps it
-  carries × 2.004 ms (0 if the counter did not step), and the engine adds repeats to the next sample, so every
-  sample gets an exact multiple of 2.004 ms (counter difference since the previous sample's report). Host time for
+  carries × `SampleMs` (0 if the counter did not step), and the engine adds repeats to the next sample, so every
+  sample gets an exact multiple of `SampleMs` (counter difference since the previous sample's report). Host time for
   other reports, after 50 ms gaps, and for good if the counter's time differs from the host clock by more than
   ×1.25 over 2 s (warning in the OTD log).
+  - **`SampleMs` = 2.000 ms since 2.8.2** (ring500 0fc2521a at 1000 Hz motion sync ON; owner: handle only that mode).
+    2.004 ms before (cdb17e54 and earlier). Other modes on 0fc2521a, deliberately not handled: 999 Hz sync OFF
+    samples every 2.004 ms (clock 0.2% slow, negligible); analog pens (CP-923 etc., new in 0fc2521a, deferred by the
+    owner) get a new pressure on every report and step byte 17 once per report (1.004 ms), so the counter's time runs
+    2x fast and the host-clock check falls back to host time (permanent until settings are reapplied). The firmware
+    handoff suggests measuring the period from the stream (host time / steps over 1-2 s, clamped 0.95-2.1 ms) if those
+    modes are ever needed. Some samples are up to +1 ms longer while the counter still steps by 1 (an ExpressKey /
+    wheel report gets its own USB slot while the pen is in range; +0.2 ms during backlog drains): counter × period
+    underestimates them, accepted. Also on 0fc2521a: reports arrive ~1.3 ms fresher (pen sample to USB done median
+    0.72 ms), the 1 Hz battery report 0x13 is gone, 0x1E layout / saturation fix unchanged. Calibration from older
+    recordings should be redone on 0fc2521a at 1000 sync ON.
   - In ~1.5% of samples the new pressure arrives one report *after* the counter step: per report (S = counter
     stepped, p = pressure changed) `[S p][. _][S _][. p][. _][S p]`. 2.8.0's clock split every period evenly (1.002
     ms per report, the stepping report getting 2.004 minus the half already given); there the late sample got
