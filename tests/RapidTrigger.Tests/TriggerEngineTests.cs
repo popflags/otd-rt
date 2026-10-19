@@ -324,6 +324,86 @@ namespace RapidTrigger.Tests
             Assert.Equal((2, TriggerEvent.Contact), Signals.Run(contact, Signals.Samples(2, 8191, 4673, 4453, 4588)).First());
         }
 
+        private static TriggerSettings MinimumClick25()
+        {
+            var s = Owner20261019Game();
+            s.MinimumClick = 25;
+            return s;
+        }
+
+        [Fact]
+        public void MinimumClickLengthensAQuickTapAndABrush()
+        {
+            // A 16 ms touch (2 reports per sample, 1 ms each), then the pen hovers: the lift fires 25 ms after the press.
+            var tap = Signals.Samples(2, 2000, 2400, 2500, 2450, 2300, 1900, 1200, 500).Concat(Enumerable.Repeat(0.0, 30)).ToArray();
+
+            var engine = Engine(MinimumClick25());
+            engine.Update(0, 1);
+            Assert.Equal(new[] { (0, TriggerEvent.Contact), (25, TriggerEvent.Lift) }, Signals.Run(engine, tap));
+
+            var off = Engine(Owner20261019Game());
+            off.Update(0, 1);
+            Assert.Equal((12, TriggerEvent.FastRelease), Signals.Run(off, tap).Last());
+
+            // b 174.8 s: 118 -> 71 -> 0, a 4 ms brush (the owner counts these as taps too) also lasts 25 ms.
+            var brush = Engine(MinimumClick25());
+            brush.Update(0, 1);
+            Assert.Equal(new[] { (0, TriggerEvent.Contact), (25, TriggerEvent.Lift) },
+                Signals.Run(brush, Signals.Samples(2, 118, 71).Concat(Enumerable.Repeat(0.0, 30))));
+        }
+
+        [Fact]
+        public void MinimumClickAlsoLengthensARePressWithoutLifting()
+        {
+            // A hold, a release and a re-press without lifting that releases again soon after: the re-press lasts 25 ms.
+            var hold = Signals.Samples(2, Enumerable.Range(0, 300).Select(i => 5000.0 - i % 2 * 4).ToArray());
+            var wobble = Signals.Samples(2, 4900, 4700, 4400, 4100, 3900, 3850, 3900, 3960, 4000, 3900, 3600, 3200, 2600, 1800, 900)
+                .Concat(Enumerable.Repeat(0.0, 30)).ToArray();
+            var on = Engine(MinimumClick25()); on.Update(0, 1); Signals.Run(on, hold);
+            var off = Engine(Owner20261019Game()); off.Update(0, 1); Signals.Run(off, hold);
+
+            var events = Signals.Run(on, wobble);
+            int rearm = events.FindIndex(e => e.Event == TriggerEvent.Rearm);
+            Assert.True(rearm >= 0 && rearm + 1 < events.Count);
+            Assert.Equal(25, events[rearm + 1].Index - events[rearm].Index);
+
+            var plain = Signals.Run(off, wobble);
+            int r = plain.FindIndex(e => e.Event == TriggerEvent.Rearm);
+            Assert.True(plain[r + 1].Index - plain[r].Index < 25);
+        }
+
+        [Fact]
+        public void MinimumClickHoldsAFastReleaseAndLongerClicksAreUntouched()
+        {
+            // game2 31.17 s: 87 -> 1229 -> 1422 -> ... a 14 ms tap; its fast release came due right away (12 ms click).
+            var quick = Signals.Samples(2, 1229, 1422, 1331, 1193, 925, 567, 300, 200, 150, 120, 100, 90, 80, 70, 60, 50);
+            var engine = Engine(MinimumClick25());
+            engine.Update(0, 1);
+            Assert.Equal((25, TriggerEvent.FastRelease), Signals.Run(engine, quick).Last());
+
+            // A tap that releases after 30 ms anyway is not changed.
+            var longer = Signals.Samples(2, Enumerable.Repeat(4000.0, 15).Concat(new double[] { 3700, 3200, 2500, 1500, 500, 0 }).ToArray());
+            var a = Engine(MinimumClick25()); a.Update(0, 1);
+            var b = Engine(Owner20261019Game()); b.Update(0, 1);
+            Assert.Equal(Signals.Run(b, longer), Signals.Run(a, longer));
+        }
+
+        [Fact]
+        public void LiftHeldByMinimumClickStillFiresWhenThePenIsBackAndTheNextSampleIsANewContact()
+        {
+            // A 14 ms touch, 6 ms off the surface, then the next tap: the held lift fires at 25 ms and the next sample presses
+            // as a new contact instead of merging the two taps into one click.
+            var taps = Signals.Samples(2, 3000, 3500, 3600, 3400, 2600, 1500, 600, 0, 0, 0, 2500, 3500, 4000, 4200, 4300, 4350, 4400, 4420, 4430, 4440).ToArray();
+
+            var engine = Engine(MinimumClick25());
+            engine.Update(0, 1);
+            var events = Signals.Run(engine, taps);
+
+            Assert.Equal(new[] { TriggerEvent.Contact, TriggerEvent.Lift, TriggerEvent.Contact }, events.Select(e => e.Event));
+            Assert.Equal(25, events[1].Index);
+            Assert.Equal(26, events[2].Index);
+        }
+
         [Fact]
         public void PressHoldoffDelaysOnlyReleasesInsideIt()
         {

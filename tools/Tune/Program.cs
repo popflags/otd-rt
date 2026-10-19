@@ -1,21 +1,22 @@
 // Scores settings on the 2 ms gameplay recordings (PTK-670 ring500 83a52e3c, 1000 Hz motion sync ON, Windows, counter-timed: a, b and
-// the S4 League game log) and synthetic 2 ms drags; how the owner's settings were chosen (see CLAUDE.md).
+// the two S4 League game logs) and synthetic 2 ms drags; how the owner's settings were chosen (see CLAUDE.md).
 //
 // dotnet run -c Release --project tools/Tune -- [--top=N] [--all] [--margin] [--robust] [--dump=FILE] "Key=v1|v2,Key=v" ...
 //
 // Each argument is a grid over TriggerSettings properties; unlisted ones keep the owner's settings (Owner() below). The first two
-// rows are the owner's settings before (Previous(), 2.9.0) and now (2.10.0). Configs with light-drag cut-outs at +-10 or +-15 are hidden unless --all.
+// rows are the owner's settings before (Previous(), 2.10.0) and now (2.11.0). Configs with light-drag cut-outs at +-10 or +-15 are hidden unless --all.
 // Columns:
 //   L:       cut-outs on light drags 150-1000 (10 % dips over 300 ms, 1.5 % tremor at 9 Hz, the dip at a random phase against the
 //            contact, 20 seeds per level), noise +-10, +-15 (and +-20 in brackets; the recordings' sigma is ~4 per sample)
 //   M:       cut-outs on medium drags 2500 / 5000 (15 % dips, 2 % tremor, +-10, 10 seeds each); harsher than any real drag dip
-//   clicks:  the 9 intended re-clicks without lifting in the recordings (fastest 10 ms fall >= 29 raw/ms, rebound >= 220): how many
+//   clicks:  the 10 intended re-clicks without lifting in the recordings (fastest 10 ms fall >= 29 raw/ms, rebound >= 220): how many
 //            release before the trough and re-press within 80 ms after it, mean ms the release comes before the trough (larger =
 //            earlier), mean ms from the trough to the re-press (a miss counts 80)
-//   slowRel: of the 17 slow drag dips (fastest 10 ms fall <= 14.7 raw/ms, pen stays down), how many release (must be 0)
+//   slowRel: of the 22 slow drag dips (fastest 10 ms fall <= 14.7 raw/ms, pen stays down), how many release (must be 0)
 //   dbl:     re-presses inside strokes that are not one of the re-clicks: at landing (<= 40 ms after the contact) / later
 //            (two-stage lifts, wobbles on a plateau after a release, sensor glitches without Glitch Jump)
 //   late:    contacts (pressure rising from <= 2, first sample below 8191) that pressed after their first sample
+//   short:   clicks shorter than 17 ms (one 60 fps frame; a game that reads the button once per frame can miss them)
 //   tap/hold: mean lead before lift of each stroke's final release (ms, larger = earlier), strokes < / >= 300 ms; tap p10
 //   rep:     synthetic re-presses without lifting caught (of 1216, as tools/Sweep, at 2 ms) and mean trough -> re-press ms
 //   margin:  (--margin) largest factor FastFallSpeed, FastFallPercent and FastReleaseDistance can be divided by before a slow drag
@@ -32,7 +33,7 @@ string root = Directory.GetCurrentDirectory();
 while (!Directory.Exists(Path.Combine(root, "recordings")))
     root = Path.GetDirectoryName(root) ?? throw new DirectoryNotFoundException("Run from inside the repository.");
 string R = Path.Combine(root, "recordings") + Path.DirectorySeparatorChar;
-var real = new[] { "play-ptk670-2ms-a-20261019.csv", "play-ptk670-2ms-b-20261019.csv", "play-ptk670-2ms-game-20261019.csv" }
+var real = new[] { "play-ptk670-2ms-a-20261019.csv", "play-ptk670-2ms-b-20261019.csv", "play-ptk670-2ms-game-20261019.csv", "play-ptk670-2ms-game2-20261019.csv" }
     .Select(f => PressureLog.Load(R + f, 1000)).ToArray();
 int top = 40;
 bool all = args.Contains("--all"), withMargin = args.Contains("--margin");
@@ -45,18 +46,18 @@ var light10 = LightSet(10); var light15 = LightSet(15); var light20 = LightSet(2
 var medium = new[] { 2500.0, 5000 }.SelectMany(l => Enumerable.Range(0, 10).Select(sd => Synth.Drag(2, l, 0.15, 0.02, 10, 2000 + sd))).ToList();
 var (repress, cycles) = Synth.Repress(2);
 
-// The owner's settings since 2.10.0 (Windows and Linux), and the 2.9.0 ones before.
+// The owner's settings since 2.11.0 (Windows and Linux), and the 2.10.0 ones before.
 TriggerSettings Owner() => new()
 {
     ContactThreshold = 4, PhantomContactPressure = 8191, PhantomConfirmTime = 20, DropoutTime = 4, DropoutPressure = 8190, GlitchJump = 2500,
     LiftThreshold = 2, ActivationDistance = 10, ActivationPercent = 0, FastFallSpeed = 12, FastFallPercent = 0.2, FastReleaseDistance = 35,
     TapAllowance = 0.2, RepressAllowance = 0.3, PressHoldoff = 12, ReleaseDistance = 600, ReleaseRatio = 0, MaxReleaseDistance = 1000,
-    DriftTimeConstant = 10, PressDriftTimeConstant = 0, HoldTime = 400, HoldReleaseMultiplier = 1,
+    DriftTimeConstant = 10, PressDriftTimeConstant = 0, HoldTime = 400, HoldReleaseMultiplier = 1, MinimumClick = 25,
 };
 TriggerSettings Previous()
 {
     var s = Owner();
-    s.DropoutTime = 3; s.GlitchJump = 0; s.ActivationPercent = 0.75; s.TapAllowance = 0.1; s.ReleaseDistance = 300;
+    s.MinimumClick = 0;
     return s;
 }
 
@@ -72,15 +73,16 @@ var strokes = real.Select(Strokes).ToArray();
 // from a local peak, rebound >= 100 before the lift, not within 20 ms of the contact, one-sample glitches excluded) and classified by
 // the fastest fall over 10 ms of samples: re-clicks >= 29 raw/ms with a rebound >= 220, slow drag dips <= 14.7 raw/ms.
 var intended = new (int F, double Peak, double Trough)[] { (1, 42504, 42938), (1, 82390, 82850), (1, 113782, 114196), (1, 129708, 130048), (1, 150404, 150770), (1, 164348, 164700),
-    (2, 20898, 21332), (2, 116052, 116088), (2, 228612, 229102) };
+    (2, 20898, 21332), (2, 116052, 116088), (2, 228612, 229102), (3, 127434, 127806) };
 var slow = new (int F, double Peak, double Trough)[] { (0, 30468, 30600), (0, 46220, 46534), (0, 66414, 66836), (1, 24600, 24916), (1, 37476, 37638), (1, 88864, 89128), (1, 169658, 169946), (1, 177188, 177460),
-    (2, 5258, 5598), (2, 11052, 11370), (2, 22592, 22982), (2, 73662, 74108), (2, 98242, 98734), (2, 129012, 129176), (2, 162932, 163222), (2, 220260, 220514), (2, 251476, 251654) };
+    (2, 5258, 5598), (2, 11052, 11370), (2, 22592, 22982), (2, 73662, 74108), (2, 98242, 98734), (2, 129012, 129176), (2, 162932, 163222), (2, 220260, 220514), (2, 251476, 251654),
+    (3, 3712, 4026), (3, 104046, 104378), (3, 184718, 184872), (3, 187026, 187284), (3, 192714, 193048) };
 
 static bool IsRelease(EventRecord e) => e.Event is TriggerEvent.FastRelease or TriggerEvent.Release;
 int SlowReleased(TriggerSettings s, List<EventRecord>[] ev)
     => slow.Count(d => ev[d.F].Any(e => e.Time >= d.Peak && e.Time <= d.Trough + 20 && IsRelease(e)));
 
-(int Land, int Spur, int Caught, double RelLead, double Rearm, int SlowRel, double TapLead, double TapP10, double HoldLead, int Late) RealScore(TriggerSettings s)
+(int Land, int Spur, int Caught, double RelLead, double Rearm, int SlowRel, double TapLead, double TapP10, double HoldLead, int Late, int Short) RealScore(TriggerSettings s)
 {
     var ev = real.Select(l => Analysis.Replay(l, s).Events).ToArray();
     int land = 0, spur = 0, caught = 0; double relLead = 0, rearm = 0;
@@ -111,6 +113,10 @@ int SlowReleased(TriggerSettings s, List<EventRecord>[] ev)
             (l.Time[b - 1] - l.Time[a] >= 300 ? hold : tap).Add(l.Time[b] - r.Time);
         }
     }
+    int shortClicks = 0;
+    foreach (var e in ev)
+        for (int k = 0; k + 1 < e.Count; k++)
+            if (e[k].Event is TriggerEvent.Contact or TriggerEvent.Rearm && e[k + 1].Time - e[k].Time < 17) shortClicks++;
     int late = 0;
     for (int f = 0; f < real.Length; f++)
     {
@@ -123,7 +129,7 @@ int SlowReleased(TriggerSettings s, List<EventRecord>[] ev)
         }
     }
     tap.Sort();
-    return (land, spur, caught, caught > 0 ? relLead / caught : 0, rearm / intended.Length, SlowReleased(s, ev), tap.Average(), tap[tap.Count / 10], hold.Average(), late);
+    return (land, spur, caught, caught > 0 ? relLead / caught : 0, rearm / intended.Length, SlowReleased(s, ev), tap.Average(), tap[tap.Count / 10], hold.Average(), late, shortClicks);
 }
 
 int Cuts(IEnumerable<PressureLog> logs, TriggerSettings s) => logs.Sum(l => Analysis.CutOuts(Analysis.Replay(l, s), 300).Count);
@@ -165,7 +171,7 @@ foreach (var a in args.Where(a => !a.StartsWith("--")))
     }
     configs.AddRange(grid);
 }
-string Desc(TriggerSettings s) => $"FFS {s.FastFallSpeed} FFP {s.FastFallPercent} FRD {s.FastReleaseDistance} Tap {s.TapAllowance} Rep {s.RepressAllowance} HT {s.HoldTime} HO {s.PressHoldoff} Act {s.ActivationDistance}+{s.ActivationPercent} PD {s.PressDriftTimeConstant} Rel {s.ReleaseDistance} GJ {s.GlitchJump}/{s.DropoutTime}";
+string Desc(TriggerSettings s) => $"FFS {s.FastFallSpeed} FFP {s.FastFallPercent} FRD {s.FastReleaseDistance} Tap {s.TapAllowance} Rep {s.RepressAllowance} HT {s.HoldTime} HO {s.PressHoldoff} Act {s.ActivationDistance}+{s.ActivationPercent} PD {s.PressDriftTimeConstant} Rel {s.ReleaseDistance} GJ {s.GlitchJump}/{s.DropoutTime} MC {s.MinimumClick}";
 
 var dump = args.FirstOrDefault(a => a.StartsWith("--dump="));
 if (dump != null)
@@ -192,7 +198,7 @@ if (args.Contains("--robust"))
 }
 
 // Ranking (hidden configs aside): every re-click caught first, then re-click release lead, tap and hold lead, fewer double clicks.
-double Score((int Land, int Spur, int Caught, double RelLead, double Rearm, int SlowRel, double TapLead, double TapP10, double HoldLead, int Late) r)
+double Score((int Land, int Spur, int Caught, double RelLead, double Rearm, int SlowRel, double TapLead, double TapP10, double HoldLead, int Late, int Short) r)
     => r.SlowRel > 0 ? -1000 + r.Caught : r.Caught * 100 + r.RelLead + 2 * r.TapLead + r.HoldLead / 4 - 3 * (r.Land + r.Spur);
 var results = new ConcurrentBag<(int Order, string Line, bool Ok, double Key)>();
 Parallel.ForEach(configs.Select((c, i) => (c, i)), x =>
@@ -202,7 +208,7 @@ Parallel.ForEach(configs.Select((c, i) => (c, i)), x =>
     bool ok = l10 == 0 && l15 == 0;
     if (!ok && !all && x.i > 1) { results.Add((x.i, "", false, 0)); return; }
     var rs = RealScore(s); var (rc, rd) = Repress(s);
-    results.Add((x.i, $"{Desc(s),-92} | L {l10,3} {l15,3} ({Cuts(light20, s),3}) M {Cuts(medium, s),3} | clicks {rs.Caught}/{intended.Length} lead {rs.RelLead,5:F1} rearm {rs.Rearm,5:F1} | slowRel {rs.SlowRel} dbl {rs.Land,2} {rs.Spur,2} late {rs.Late} | tap {rs.TapLead,5:F1} p10 {rs.TapP10,4:F0} hold {rs.HoldLead,5:F1} | rep {rc,4} {rd,4:F1}{(withMargin ? $" | margin {Margin(s):F2}" : "")}", ok, Score(rs)));
+    results.Add((x.i, $"{Desc(s),-92} | L {l10,3} {l15,3} ({Cuts(light20, s),3}) M {Cuts(medium, s),3} | clicks {rs.Caught}/{intended.Length} lead {rs.RelLead,5:F1} rearm {rs.Rearm,5:F1} | slowRel {rs.SlowRel} dbl {rs.Land,2} {rs.Spur,2} late {rs.Late} short {rs.Short,2} | tap {rs.TapLead,5:F1} p10 {rs.TapP10,4:F0} hold {rs.HoldLead,5:F1} | rep {rc,4} {rd,4:F1}{(withMargin ? $" | margin {Margin(s):F2}" : "")}", ok, Score(rs)));
 });
 Console.WriteLine($"{configs.Count} configs, {results.Count(r => r.Ok)} without light-drag cut-outs at +-10 / +-15");
 Console.WriteLine("config | L +-10 +-15 (+-20) M | re-clicks caught, release ms before trough, re-press ms after | slow dips released, double clicks landing / later | lead before lift: tap mean, p10, hold mean | synthetic re-presses, delay");

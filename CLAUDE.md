@@ -187,12 +187,40 @@ fires on the report where the holdoff ends, repeat or not.
   release that came due inside it is dropped at its end (detectors restart from that sample) if the last sample did not fall and
   pressure is back up from its low since the press's peak by the re-press distance: releasing there only re-pressed on the next
   sample (landing overshoot 3706 -> 3337 -> 3616). A tap whose own fall has started by then still releases at the holdoff end.
+- `MinimumClick` (2.11.0, default 0 = off): every press lasts at least this long; any release, a lift included, is held until then
+  (non-lift releases wait for max(PressHoldoff, MinimumClick)). A held lift is final: it fires when the time is up even if the pen
+  is back down, and the next sample is then a fresh contact (a quick re-tap is not merged into the previous click). A held release
+  needs reports to fire, so keep it short (the PTK keeps sending zero-pressure reports in hover).
 - Defaults (2.7.0, unchanged in 2.8.0; GlitchJump 0 since 2.10.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
   PressHoldoff 8 ms, HoldTime 250 ms,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-19 second S4 League log, `recordings/play-ptk670-2ms-game2-20261019.csv` (Windows, candidate firmware ring500
+a12b3929 = 83a52e3c + the R5G late-reply fix, which removes the hard-press glitches at the source: 0 excursions; played on 2.10.0
+with the owner's settings, confirmed in the Windows OTD log: the applied filter settings include GlitchJump); 2.11.0.**
+- Firmware notes (`ptk670-firmware-updates.md`, from the firmware session, untracked): on a12b3929 GlitchJump has nothing left to
+  catch, and genuine lifts from a hard press can go from 8191 straight to tip-off in one sample (3–42 per log by the firmware's
+  count), which both GlitchJump and the dropout guard hold for DropoutTime. On this log turning both off changes no event (no such
+  lift was held), so the owner's DropoutTime 4 / GlitchJump 2500 cost nothing here; with the default DropoutTime 60 such lifts
+  would release 60 ms late. The phantom guard stays (one-sample 8191 contacts 10–40 ms after a lift, 4–10 % of lifts). Owner: "it still misses
+retaps … its literal genuine full lift off into a new tap not being registered."
+- Replay: the plugin presses on every real tap, each on its first sample (160 contacts for 163 touches; the other 3 are one-sample
+  8191 phantoms with the tip bit at hover ~30–45, the pen moving away from / towards the surface; at 196.6 s the real tap followed
+  32 ms later and pressed on its first sample); 1 glitch; 2 in-stroke re-clicks, both caught. **Cause still open**: the replay
+  cannot show a missed tap, so the next step is a live session with Enable Diagnostics on (Windows writes to
+  `C:\Users\Administrator\rapid-trigger-logs\`) and the owner noting when a tap failed.
+- First guess, wrong: 26 of 171 clicks last under 17 ms (12 ms = PressHoldoff end), which a game reading the button once per frame
+  could miss. The owner's game (S4 League private server) reads input at 3000 ticks/s, so click length is not the problem.
+  `MinimumClick` stays in 2.11.0 as an option for frame-polled games (off by default; the owner uses 0). With 25 ms it never
+  delays a press or moves the release of a click ≥ 25 ms; short clicks (taps, brushes, re-presses) become 26 ms, and 5
+  re-presses < 25 ms after a press (landing sags) disappear via the 2.9.0 rebound rule. Defaults and 0 replay identically to 2.10.0.
+- Owner's statements to keep: brushes (4–6 ms touches) are intended taps ("when i do i dont mind it going out"); "drag into a tap is
+  a frequent action i want no delays in"; "taps cannot be limited if they're genuine, it breaks what i do"; no drag cuts felt on
+  2.10.0. In-hold release + re-press pairs on this log (2.1, 82.3, 83.9, 117.3, 183.6 s: 6–9 % dips at ~27 raw/ms, about as fast
+  as the slowest re-clicks) are therefore treated as drag-into-tap, not cuts; hold sensitivity was left as is.
 
 **2026-10-19 S4 League game log, `recordings/play-ptk670-2ms-game-20261019.csv` (Windows, 83a52e3c, 1000 Hz sync ON, played
 on 2.9.0); 2.10.0 and the owner's settings.** Owner: "it consistently would not let me repress - i need repress delay to be the

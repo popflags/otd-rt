@@ -110,6 +110,7 @@ namespace RapidTrigger
                 TapAllowance = TapAllowance,
                 RepressAllowance = RepressAllowance,
                 PressHoldoff = PressHoldoff,
+                MinimumClick = MinimumClick,
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
                 HoldReleaseMultiplier = HoldReleaseMultiplier,
@@ -217,6 +218,12 @@ namespace RapidTrigger
             "For this long after a press only a lift releases. Absorbs landing bounces right after contact that would\n" +
             "otherwise release and re-press (double click). 0 = off.")]
         public double PressHoldoff { set; get; } = 8;
+
+        [Property("Minimum Click"), DefaultPropertyValue(0.0), Unit("ms"), ToolTip(
+            "Every click lasts at least this long; releases (lifts included) wait until then. Rapid releases make quick\n" +
+            "taps very short clicks, and a game that reads the button once per frame can miss a click shorter than a\n" +
+            "frame (60 fps: 16.7 ms). Applies to taps, brushes and re-presses alike. Keep it under ~50 ms. 0 = off.")]
+        public double MinimumClick { set; get; }
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +

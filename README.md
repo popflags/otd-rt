@@ -156,6 +156,7 @@ logs are accepted too.
 | Fast Fall Percent | 0.19 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
 | Tap Allowance / Re-press Allowance | 0.4 / 0.5 | The drag allowance starts at this fraction after a contact / a re-press and ramps to full over Hold Time: taps release earlier, holds get the full allowance. 1 = off. |
+| Minimum Click | 0 (off) | Every click (taps, brushes, re-presses) lasts at least this long; releases, lifts included, wait until then. For games that read the button once per frame and miss clicks shorter than a frame (rapid releases make quick taps ~12 ms clicks; 60 fps = 16.7 ms frames). A lift held back still fires when the time is up and the next sample is a new contact. Keep it under ~50 ms. |
 | Press Holdoff | 8 ms | Only a lift releases this soon after a press (landing bounces); a release due inside it is dropped if pressure has come back up by the re-press distance and is rising when it ends. 0 = off. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |

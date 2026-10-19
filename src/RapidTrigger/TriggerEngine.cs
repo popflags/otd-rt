@@ -123,6 +123,17 @@ namespace RapidTrigger
         /// </summary>
         public double PressHoldoff { get; set; } = 8;
 
+        /// <summary>
+        /// Every press lasts at least this long, in ms: any release, a lift included, waits until then. Rapid releases make
+        /// quick taps very short clicks (12 ms on the 2026-10-19 S4 League logs, the end of a 12 ms holdoff), and a game that
+        /// reads the button once per frame misses a click that starts and ends between two frames (60 fps: 16.7 ms). Applies
+        /// to every press: taps, brushes of a few ms and re-presses without lifting (owner: brushes are intended taps too, and
+        /// an unintended one registering is fine). A held lift still fires when the time is up even if the pen is already back
+        /// down, and the next sample is then a fresh contact, so a quick re-tap is not merged into the previous click. Keep it
+        /// short (under ~50 ms): a held release needs reports to arrive to fire. 0 = off.
+        /// </summary>
+        public double MinimumClick { get; set; }
+
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
 
@@ -261,11 +272,11 @@ namespace RapidTrigger
             if (p == _previousPressure && _phantomMs < 0 && _dropoutMs < 0)
             {
                 _pendingMs += elapsedMs;
-                if (_heldOffRelease != TriggerEvent.None && HeldTime + _pendingMs >= _settings.PressHoldoff)
+                if (_heldOffRelease != TriggerEvent.None && HeldTime + _pendingMs >= HoldUntil(_heldOffRelease))
                 {
                     HeldTime += _pendingMs;
                     _pendingMs = 0;
-                    return Rebounded(p) ? DropHeldOffRelease(p) : Release(p, _heldOffRelease);
+                    return FireHeldOffRelease(p);
                 }
                 return TriggerEvent.None;
             }
@@ -403,13 +414,23 @@ namespace RapidTrigger
             HoldReference = _anchor;
             CurrentReleaseDistance = ReleaseDistanceFor(_anchor, HeldTime);
 
+            // A lift held back by MinimumClick is final, even if the pen is back down before it fires.
+            if (_heldOffRelease == TriggerEvent.Lift)
+                return HeldTime < s.MinimumClick ? TriggerEvent.None : FireHeldOffRelease(p);
             if (p <= s.LiftThreshold)
+            {
+                if (HeldTime < s.MinimumClick)
+                {
+                    _heldOffRelease = TriggerEvent.Lift;
+                    return TriggerEvent.None;
+                }
                 return Release(p, TriggerEvent.Lift);
+            }
 
             var due = fastDetector && FallExcess >= s.FastReleaseDistance * multiplier ? TriggerEvent.FastRelease
                 : _anchor - p >= CurrentReleaseDistance ? TriggerEvent.Release
                 : TriggerEvent.None;
-            if (due != TriggerEvent.None && HeldTime < s.PressHoldoff)
+            if (due != TriggerEvent.None && HeldTime < HoldUntil(due))
             {
                 _heldOffRelease = due;
                 return TriggerEvent.None;
@@ -426,6 +447,24 @@ namespace RapidTrigger
         private bool Rebounded(double p)
             => !_lastSampleFell && p > _pressLow
                && p - _pressLow >= _settings.ActivationDistance + _settings.ActivationPercent * 0.01 * _pressLow;
+
+        // How long after the press a release of this kind may fire: lifts wait for MinimumClick, other releases also for
+        // PressHoldoff.
+        private double HoldUntil(TriggerEvent release)
+            => release == TriggerEvent.Lift ? _settings.MinimumClick : Math.Max(_settings.PressHoldoff, _settings.MinimumClick);
+
+        // Fires a release held back by PressHoldoff / MinimumClick. A held lift always fires, and the next sample is a fresh
+        // contact even if the pen is already back down; other releases are dropped on a landing bounce (Rebounded).
+        private TriggerEvent FireHeldOffRelease(double p)
+        {
+            if (_heldOffRelease == TriggerEvent.Lift)
+            {
+                Release(p, TriggerEvent.Lift);
+                _fresh = true;
+                return TriggerEvent.Lift;
+            }
+            return Rebounded(p) ? DropHeldOffRelease(p) : Release(p, _heldOffRelease);
+        }
 
         // Stays pressed; both detectors start over from here.
         private TriggerEvent DropHeldOffRelease(double p)
