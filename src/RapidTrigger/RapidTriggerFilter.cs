@@ -96,6 +96,7 @@ namespace RapidTrigger
                 PhantomConfirmTime = PhantomConfirmTime,
                 DropoutTime = DropoutTime,
                 DropoutPressure = DropoutPressure,
+                GlitchJump = GlitchJump,
                 LiftThreshold = LiftThreshold,
                 ActivationDistance = ActivationDistance,
                 ActivationPercent = ActivationPercent,
@@ -163,6 +164,12 @@ namespace RapidTrigger
             "Lowest pressure a drop to zero can come from and still be treated as a possible dropout.\n" +
             "Dropouts were seen from 7750 up; real lifts came from 3000 or less.")]
         public double DropoutPressure { set; get; } = 6000;
+
+        [Property("Glitch Jump"), DefaultPropertyValue(0.0), Unit("raw"), ToolTip(
+            "A single sample that jumps at least this far (up or down) is held back for up to Dropout Time, and ignored\n" +
+            "if pressure comes back within this distance in that time (one-sample sensor glitches while pressed hard:\n" +
+            "8191 -> 692 -> 8191). Real changes stay under ~1800 per 2 ms sample. 2500 for the PTK-670 at 2 ms. 0 = off.")]
+        public double GlitchJump { set; get; }
 
         [Property("Lift Threshold"), DefaultPropertyValue(2.0), Unit("raw"), ToolTip(
             "At or below this pressure the tip is always released, and the next press is treated as a fresh contact.")]

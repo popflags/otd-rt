@@ -165,6 +165,11 @@ fires on the report where the holdoff ends, repeat or not.
      pressure comes back above lift in that time the zero is ignored: previous pressure stays at the pre-drop
      level (8191 → 0 → 3000 is judged as 8191 → 3000), no release while pressed, no fresh contact / lowered
      trough while released. Otherwise it counts as a lift. See the dropouts recording below.
+     **Glitch guard (2.10.0, `GlitchJump`, default 0 = off):** any one-sample jump ≥ GlitchJump, up or down, while
+     pressed or released without a lift since (never at a contact: the phantom guard handles 8191 starts), is held back
+     the same way. If pressure comes back within GlitchJump of the level before, it never happened and *nothing is counted
+     across it* (previous = the returned value, so 7818 → 8191 → 0 → 7802 does not release on the 8191 → 7802 step);
+     otherwise it is processed late as real (after DropoutTime).
   2. **FastRelease (CUSUM):** on each pressure sample,
      `FallExcess = max(0, FallExcess + (prev − p) − (FastFallSpeed + FastFallPercent%·prev)·dt)`, with dt = time since the previous
      sample, repeated reports included (before 2026-10-01 dt was the report interval, which on the PTK-670 made the
@@ -181,12 +186,37 @@ fires on the report where the holdoff ends, repeat or not.
   release that came due inside it is dropped at its end (detectors restart from that sample) if the last sample did not fall and
   pressure is back up from its low since the press's peak by the re-press distance: releasing there only re-pressed on the next
   sample (landing overshoot 3706 -> 3337 -> 3616). A tap whose own fall has started by then still releases at the holdoff end.
-- Defaults (2.7.0, unchanged in 2.8.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
+- Defaults (2.7.0, unchanged in 2.8.0; GlitchJump 0 since 2.10.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
   PressHoldoff 8 ms, HoldTime 250 ms,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-19 S4 League game log, `recordings/play-ptk670-2ms-game-20261019.csv` (Windows, 83a52e3c, 1000 Hz sync ON, played
+on 2.9.0); 2.10.0 and the owner's settings.** Owner: "it consistently would not let me repress - i need repress delay to be the
+lowest possible, else i literally cannot play the game. also there were multiple drag cuts with these settings."
+- Cause 1, firmware glitches (new in this log; none in a / b): 88 one- or two-sample excursions while pressed hard, hover
+  distance staying at the touching value (~26): 8191 → 275…1669 → 8191 at saturation, 7424 → 4496 → 7380, single zeros from
+  7400–8117 (the dropout guard missed them: the owner's DropoutPressure was 8190), and 7818 → 8191 → 0 → 7802. On 2.9.0 each
+  released and re-pressed 2 ms later (46 in-stroke re-presses, 14 fake lift + contact pairs; a fake Contact also restarted the Tap
+  Allowance ramp, so a slow 4 raw/ms decline then released, 25.2 s), and at 130.3 s a glitch release inside the holdoff left the
+  hold released for 210 ms (pressure only declined afterwards, so it never re-armed). Real per-sample changes in all three 2 ms logs:
+  falls ≤ ~1800, rises ≤ ~520 after the contact; glitches ≥ 2900 → GlitchJump 2500. Reported to the firmware side.
+- Cause 2, ReleaseDistance 300 (2.9.0 pick): the slow path released slow declines from 8191 (233.4 s: −443; 164.8 s) → back to 600.
+- Re-press delay = Activation after the trough (the release side already catches all 9 labelled re-clicks ~35 ms before their
+  trough). Trough → re-press, mean of the 9: 10 + 0.75 % 10.9 ms, 20 + 0.25 % 8.9, 20 + 0 % 7.1, **10 + 0 % 5.3**, 8 + 0 % 5.1,
+  7 + 0 % 4.4, 5 + 0 % 3.6; double clicks inside strokes (all three logs, ~11 min, landing + later) 13 / 14 / 18 / 20 / 22 / 22 / 26
+  (wobbles after a release: landing, two-stage lifts). Below ~10 (2.5σ of the ~4 sensor noise) partial releases that pause re-press
+  on noise, and the synthetic ±15 re-tap set drops from ~1030 to ~730 caught. Chosen 10 + 0 %.
+- **Owner's settings since 2.10.0:** FastFall 12 + 0.2 %, FRD 35, Tap 0.2, Repress 0.3, HoldTime 400, PressHoldoff 12, Activation
+  10 + 0 %, ReleaseDistance 600, DropoutTime 4 / DropoutPressure 8190, **GlitchJump 2500** (rest as before). Versus 2.9.0's on all
+  three logs (`tools/Tune`): re-clicks 9/9 both, released 36.0 → 34.9 ms before the trough, re-pressed 10.9 → 5.3 ms after it,
+  synthetic re-press delay 5.7 → 3.0 ms, double clicks landing / later 6 / 43 → 5 / 15, slow drag dips released 0 → 0 (margin
+  1.34 → 1.57), late contacts 1 → 0, tap lead 31.0 → 30.9 ms, hold lead 50.9 → 45.6 ms (ReleaseDistance 600), light drags 0 (±20,
+  up to 2000), medium 0. Game log: 222 → 173 presses (contacts 176 → 162, re-presses 46 → 11: 3 re-clicks, 4 landing wobbles, 4
+  two-stage hold ends). Defaults unchanged (GlitchJump 0): every recording replays identically to 2.9.0.
+- The phantom guard still matters: 11 one-sample 8191 contacts after lifts (hover 24–35 before them).
 
 **2026-10-19 gameplay logs (Windows, ring500 83a52e3c, 1000 Hz sync ON), `recordings/play-ptk670-2ms-{a,b}-20261019.csv`; 2.9.0
 and the owner's settings.** Owner: "find my best settings without any light drag cutouts (I mean 0)"; "some reactivations just

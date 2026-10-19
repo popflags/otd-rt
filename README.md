@@ -46,7 +46,10 @@ the samples alone, and a tablet with a new value on every report is unaffected.
 - *Lift*: pressure at or below **Lift Threshold** always releases. One exception: a drop straight from
   **Dropout Pressure** or more to zero waits **Dropout Time**, and is ignored if pressure comes back in that
   time. The PTK-670 on 5 ms firmware reports 0 for 5–45 ms when pressed hard (and alternates 8191 / 0 while
-  saturated); real lifts always pass through lower pressures first, so they are not delayed.
+  saturated); real lifts always pass through lower pressures first, so they are not delayed. **Glitch Jump**
+  extends this to any single sample that jumps at least that far, up or down (the PTK-670 at 2 ms sends one- or
+  two-sample glitches like 8191 → 692 → 8191 while pressed hard): it waits up to **Dropout Time** and is ignored if
+  pressure comes back.
 
 While pressed, the plugin reports **full pressure** (unless *Preserve Pressure* is on). The tip
 binding therefore fires on the very first pressed report, whatever the tip threshold in the Bindings
@@ -145,6 +148,7 @@ logs are accepted too.
 | Contact Threshold | 4 | First press from the air. Lower = earlier. |
 | Phantom Contact Pressure / Phantom Confirm Time | 8191 / 20 ms | A contact that starts at or above this pressure must last this long to press (filters one-sample max-pressure glitches after a lift). 0 = off. |
 | Dropout Time / Dropout Pressure | 60 ms / 6000 | A drop straight from at least Dropout Pressure to zero waits Dropout Time and is ignored if pressure comes back (sensor dropouts when pressed hard). Real lifts come from ≤ ~3000 and are not delayed. 0 = off. |
+| Glitch Jump | 0 (off) | A single sample that jumps at least this far (up or down, not from a lifted pen) waits up to Dropout Time and is ignored if pressure comes back within this distance; nothing is counted across it. Real changes stay under ~1800 per 2 ms sample, so 2500 suits the PTK-670 at 2 ms. |
 | Lift Threshold | 2 | Always released at or below this. |
 | Activation Distance | 10 | Re-press rise above the trough (fixed part). Keep the total ≥ 6× noise sigma. |
 | Activation Percent | 0.5 % | Part of the re-press rise that grows with the trough pressure (17.5 at 1500, 45 at 7000). |

@@ -250,6 +250,80 @@ namespace RapidTrigger.Tests
             Assert.Equal((12, TriggerEvent.FastRelease), events[1]);
         }
 
+        // The owner's settings from 2.10.0 (2 ms samples, 2 reports per sample in the tests).
+        private static TriggerSettings Owner20261019Game() => new()
+        {
+            DropoutTime = 4,
+            DropoutPressure = 8190,
+            GlitchJump = 2500,
+            ActivationDistance = 10,
+            ActivationPercent = 0,
+            FastFallSpeed = 12,
+            FastFallPercent = 0.2,
+            FastReleaseDistance = 35,
+            TapAllowance = 0.2,
+            RepressAllowance = 0.3,
+            PressHoldoff = 12,
+            HoldTime = 400,
+            ReleaseDistance = 600,
+        };
+
+        private static TriggerEngine HeldAt(TriggerSettings settings, double level)
+        {
+            var engine = Engine(settings);
+            engine.Update(0, 1);
+            Assert.Equal(TriggerEvent.Contact, Signals.Run(engine, Signals.Samples(2, 3000, level)).Single().Event);
+            // A real hold has sensor noise; a perfectly constant one would carry all its time to the next sample.
+            Assert.Empty(Signals.Run(engine, Signals.Samples(2, Enumerable.Range(0, 250).Select(i => level - (249 - i) % 2 * 4).ToArray())));
+            return engine;
+        }
+
+        [Theory]
+        // play-ptk670-2ms-game-20261019: one- and two-sample glitches while pressed hard, hover distance at touching level.
+        [InlineData(8191, new double[] { 692, 8191, 8191 })]
+        [InlineData(8191, new double[] { 1032, 1077, 8191 })]
+        [InlineData(7424, new double[] { 4496, 7380, 7381 })]
+        [InlineData(8117, new double[] { 0, 8113, 8114 })]
+        [InlineData(7818, new double[] { 8191, 0, 7802, 7806 })]
+        public void OneOrTwoSampleGlitchWhilePressedIsIgnored(double level, double[] samples)
+        {
+            var engine = HeldAt(Owner20261019Game(), level);
+
+            Assert.Empty(Signals.Run(engine, Signals.Samples(2, samples)));
+            Assert.True(engine.Pressed);
+
+            var off = Owner20261019Game();
+            off.GlitchJump = 0;
+            Assert.NotEmpty(Signals.Run(HeldAt(off, level), Signals.Samples(2, samples)));
+        }
+
+        [Fact]
+        public void JumpThatStaysIsRealAndReleasesAfterDropoutTime()
+        {
+            var engine = HeldAt(Owner20261019Game(), 8000);
+
+            var events = Signals.Run(engine, Signals.Samples(2, 3000, 2900, 2800, 2700));
+
+            // Held for the first two samples (4 ms), processed on the third.
+            Assert.Equal((4, TriggerEvent.FastRelease), events.Single());
+        }
+
+        [Fact]
+        public void GlitchJumpDoesNotDelayARealLiftOrAHardContact()
+        {
+            // Real per-sample falls stayed under ~1800 (game 104.9 s lift: 7213 -> 6988 -> ... -> 2454 -> 0).
+            var lift = new double[] { 7600, 7213, 6988, 6600, 5900, 4983, 3700, 2454, 1100, 0 };
+            var on = Signals.Run(HeldAt(Owner20261019Game(), 7600), Signals.Samples(2, lift));
+            var off = Owner20261019Game();
+            off.GlitchJump = 0;
+            Assert.Equal(Signals.Run(HeldAt(off, 7600), Signals.Samples(2, lift)), on);
+
+            // game 34.77 s: a contact that lands at 8191 presses on the next sample, as without Glitch Jump.
+            var contact = Engine(Owner20261019Game());
+            contact.Update(0, 1);
+            Assert.Equal((2, TriggerEvent.Contact), Signals.Run(contact, Signals.Samples(2, 8191, 4673, 4453, 4588)).First());
+        }
+
         [Fact]
         public void PressHoldoffDelaysOnlyReleasesInsideIt()
         {

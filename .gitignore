@@ -11,3 +11,5 @@ otd-rt-old/
 TheSaturnCollection-main/
 logs/
 rapid-trigger-logs/
+# raw OTD Tablet Debugger logs (convert with tools/td2csv.py and commit the CSV)
+recordings/tablet-data_*.txt

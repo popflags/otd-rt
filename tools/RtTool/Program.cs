@@ -55,7 +55,7 @@ static void PrintUsage()
             across all drag logs, adds the margin, and reports release speed. Prints the
             recommended plugin settings.
 
-        Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, DropoutPressure, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
+        Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, DropoutPressure, GlitchJump, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
         ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, TapAllowance, RepressAllowance, PressHoldoff, PressDriftTimeConstant,
         HoldTime, HoldReleaseMultiplier.
 

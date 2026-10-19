@@ -52,6 +52,17 @@ namespace RapidTrigger
         /// <summary>Lowest pressure a drop to zero can come from and still be treated as a possible dropout.</summary>
         public double DropoutPressure { get; set; } = 6000;
 
+        /// <summary>
+        /// A single sample that jumps at least this far from the previous one, up or down (while pressed, or released without
+        /// a lift since; never at a contact), is held
+        /// back like a dropout, for up to DropoutTime. If pressure comes back within this distance of the level before the
+        /// jump in that time, the jump is ignored and nothing is counted across it; otherwise it is real and processed late.
+        /// The PTK-670 on ring500 83a52e3c sends one- or two-sample glitches while pressed hard (8191 -> 692 -> 8191,
+        /// 7424 -> 4496 -> 7380, 8117 -> 0 -> 8113, hover distance unchanged); real changes never exceeded ~1800 per 2 ms
+        /// sample (falls) or ~520 (rises after the contact). 0 = off.
+        /// </summary>
+        public double GlitchJump { get; set; }
+
         /// <summary>At or below this the tip is always released, and the next press counts as a fresh contact.</summary>
         public double LiftThreshold { get; set; } = 2;
 
@@ -180,6 +191,9 @@ namespace RapidTrigger
         // Report time held back while a dropout was pending, handed to the state machine once it resolves.
         private double _deferredMs;
 
+        // Pressure before the pending dropout / glitch.
+        private double _dropoutLevel;
+
         // Whether the current press started from a lifted pen (Contact) rather than a re-press.
         private bool _pressedFromContact;
 
@@ -259,8 +273,10 @@ namespace RapidTrigger
             elapsedMs += _pendingMs;
             _pendingMs = 0;
 
-            if (HoldDropout(p, ref elapsedMs))
+            if (HoldDropout(p, ref elapsedMs, out bool glitchIgnored))
                 return TriggerEvent.None;
+            if (glitchIgnored)
+                _previousPressure = p;
 
             double previous = _previousPressure;
             _previousPressure = p;
@@ -269,32 +285,42 @@ namespace RapidTrigger
         }
 
         /// <summary>
-        /// Holds back a fall straight from DropoutPressure or more to zero until it has lasted DropoutTime. Returns true
-        /// while it is held back. The previous pressure stays at the level before the drop, so if pressure comes back
-        /// the zero never happened (no release while pressed; no fresh contact or lowered trough while released); once
-        /// it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
+        /// Holds back a fall straight from DropoutPressure or more to zero, or a one-sample jump of GlitchJump or more, until
+        /// it has lasted DropoutTime. Returns true while it is held back. The previous pressure stays at the level before
+        /// it, so if pressure comes back the zero never happened (no release while pressed; no fresh contact or lowered
+        /// trough while released). A glitch that comes back within GlitchJump of that level also counts no change across
+        /// it (<paramref name="glitchIgnored"/>). Once it resolves, the held-back time is added to <paramref name="elapsedMs"/>.
         /// </summary>
-        private bool HoldDropout(double p, ref double elapsedMs)
+        private bool HoldDropout(double p, ref double elapsedMs, out bool glitchIgnored)
         {
             var s = _settings;
+            glitchIgnored = false;
             bool zero = p <= s.LiftThreshold;
+            bool jumps = s.GlitchJump > 0;
 
             if (_dropoutMs < 0)
             {
-                if (!zero || s.DropoutTime <= 0 || _previousPressure < Math.Max(s.DropoutPressure, s.LiftThreshold + 1))
+                bool dropout = zero && _previousPressure >= Math.Max(s.DropoutPressure, s.LiftThreshold + 1);
+                // Not before a fresh contact has pressed: the phantom guard handles a contact that starts at 8191.
+                bool glitch = jumps && (Pressed || !_fresh) && _previousPressure > s.LiftThreshold
+                    && Math.Abs(p - _previousPressure) >= s.GlitchJump;
+                if (s.DropoutTime <= 0 || !(dropout || glitch))
                     return false;
                 _dropoutMs = 0;
+                _dropoutLevel = _previousPressure;
                 _deferredMs = elapsedMs;
                 return true;
             }
 
-            if (zero && _dropoutMs + elapsedMs < s.DropoutTime)
+            bool away = zero || (jumps && Math.Abs(p - _dropoutLevel) >= s.GlitchJump);
+            if (away && _dropoutMs + elapsedMs < s.DropoutTime)
             {
                 _dropoutMs += elapsedMs;
                 _deferredMs += elapsedMs;
                 return true;
             }
 
+            glitchIgnored = !away && jumps;
             elapsedMs += _deferredMs;
             _dropoutMs = -1;
             _deferredMs = 0;
