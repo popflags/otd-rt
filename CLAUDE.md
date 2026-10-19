@@ -1,5 +1,9 @@
 # Rapid Trigger for OpenTabletDriver: notes for Claude
 
+**After a context reset, read `docs/HANDOFF.md` first** (current versions, installed settings on both systems, file locations, safe
+procedures for the Windows partition, open items). Analysis scripts live in `scratch/` (in git on purpose; Claude's /tmp scratchpad
+gets wiped).
+
 Read this before changing the trigger logic. It records what was tried, measured and decided, including
 material that only exists on the owner's Linux machine and is git-ignored (`otd-rt-old/`,
 `TheSaturnCollection-main/`, `logs/`). The cloud session does not have those folders; everything
@@ -35,6 +39,8 @@ tools/RtTool/                            `rt` CLI: replay + calibrate; compiles 
 tools/Sweep/                             `sweep` CLI: scores settings grids on recordings + synthetic signals (how defaults are chosen)
 tools/Tune/                              `tune` CLI: scores settings on the 2 ms gameplay recordings (labelled re-clicks / drag dips) + 2 ms drags
 tools/td2csv.py                          OTD Tablet Debugger log (tablet-data_*.txt) -> CSV with engine_ms from the byte-17 counter
+scratch/                                 analysis scripts (diagnostics tap timing, touch checks, dips, glitches, phantoms, Windows safety check, settings editor); README inside
+docs/HANDOFF.md                          current state, locations, procedures, open items
 tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1 kHz reports; --sample-ms N repeats, --samples-only)
 tests/RapidTrigger.Tests/                xunit tests on synthetic 1 kHz report streams (Signals.cs), FirmwareSampleClock tests
 recordings/                              real diagnostics CSVs from the tablet (commit them here)
