@@ -315,7 +315,9 @@ namespace RapidTrigger
                 // Not before a fresh contact has pressed: the phantom guard handles a contact that starts at 8191.
                 bool glitch = jumps && (Pressed || !_fresh) && _previousPressure > s.LiftThreshold
                     && Math.Abs(p - _previousPressure) >= s.GlitchJump;
-                if (s.DropoutTime <= 0 || !(dropout || glitch))
+                // Not while a phantom contact (a lone 8191 after a lift) waits for confirmation: a zero there means it is gone,
+                // and holding it delayed the real contact right after it (2026-10-20 diagnostics: 8191 8191 0 550 pressed on 1938).
+                if (s.DropoutTime <= 0 || _phantomMs >= 0 || !(dropout || glitch))
                     return false;
                 _dropoutMs = 0;
                 _dropoutLevel = _previousPressure;

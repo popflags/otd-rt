@@ -198,6 +198,22 @@ fires on the report where the holdoff ends, repeat or not.
 
 ### Evidence behind the design and defaults
 
+**2026-10-20 live diagnostics, Windows (a12b3929, 2.11.0 with the owner's settings, Minimum Click 0), 23 min
+(`rt-20261020-002836.csv`; rhythmic sections in `recordings/play-ptk670-2ms-rhythm-20261020.csv`); 2.11.1.** Owner: "I dont think my
+taps are being missed now, but its like the timing is inconsistent between them … very rythmic taps … find out the actual delay im
+trying to do and make sure that does not get impacted. i cannot have it variable"; later "i probably want 500 ms, not 520".
+- Rhythmic runs (6 runs, 174 taps): onset-to-onset median 520 ms (≈115 per minute), run medians 506–542, steadiest 15-tap stretches
+  492–541 ms with sd 18–61. Same on the PC clock and the tablet's counter clock, so it is the owner's own spread.
+- Plugin: 933 of 935 presses on the touch's first report (press-to-press = touch-to-touch exactly); PC arrival of the press reports on
+  the regular 1 ms grid within 0.01 ms for 98 %. Releases come a median 8 ms after the fall starts (p10 6, p90 12, sd 2.5 for taps
+  held ≥ 40 ms), 36–38 ms before the pen leaves; quick taps release when PressHoldoff (12 ms) ends.
+- The two late presses: a contact landing at 8191 for 2 samples (phantom guard waits until pressure leaves 8191: 4 ms, kept), and a
+  real contact 2 ms after a phantom (8191 8191 0 550 …): the zero was held as a dropout (from ≥ DropoutPressure 8190) and GlitchJump
+  kept holding 550, so it pressed on the next sample. **2.11.1:** no dropout / glitch hold while a phantom contact is pending
+  (`RealContactRightAfterAPhantomPressesOnItsFirstSample`). Only that one event changes on any recording; defaults identical.
+- The diagnostics clock (engine_ms) only counts ≤ 50 ms for gaps where the pen left hover range, so intervals across range exits must
+  be measured on t_ms.
+
 **2026-10-19 second S4 League log, `recordings/play-ptk670-2ms-game2-20261019.csv` (Windows, candidate firmware ring500
 a12b3929 = 83a52e3c + the R5G late-reply fix, which removes the hard-press glitches at the source: 0 excursions; played on 2.10.0
 with the owner's settings, confirmed in the Windows OTD log: the applied filter settings include GlitchJump); 2.11.0.**

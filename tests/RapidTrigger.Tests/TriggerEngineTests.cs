@@ -405,6 +405,18 @@ namespace RapidTrigger.Tests
         }
 
         [Fact]
+        public void RealContactRightAfterAPhantomPressesOnItsFirstSample()
+        {
+            // rt-20261020-002836 (Windows diagnostics, a12b3929): a phantom 8191 for two samples, one zero, then the real tap.
+            // The zero used to be held as a dropout (from >= 8190) and Glitch Jump kept holding 550, so the press came on 1938.
+            var engine = Engine(Owner20261019Game());
+            engine.Update(0, 1);
+            var events = Signals.Run(engine, Signals.Samples(2, 0, 8191, 8191, 0, 550, 1938, 2270, 2410));
+
+            Assert.Equal((8, TriggerEvent.Contact), events.Single());
+        }
+
+        [Fact]
         public void PressHoldoffDelaysOnlyReleasesInsideIt()
         {
             // A fast fall 5 ms after contact waits until the holdoff ends; a lift is never held off.
