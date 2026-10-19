@@ -67,7 +67,8 @@ Every push runs CI and uploads `RapidTrigger-<sha>` (RapidTrigger.zip + RtTool.z
 the Actions run page. The owner extracts RapidTrigger.zip into `%localappdata%\OpenTabletDriver\Plugins\`
 and restarts OTD. Releases: bump `<Version>` in `src/RapidTrigger/RapidTrigger.csproj` and push to `main` or a
 `claude/*` branch; `release.yml` creates the `vX.Y.Z` tag and the GitHub release when that tag does not exist
-yet (cloud sessions cannot push tags). Pushing a `v*` tag by hand still works. Commit messages end with the Co-Authored-By trailer.
+yet (cloud sessions cannot push tags). Pushing a `v*` tag by hand still works. `release-notes/vX.Y.Z.md`, if present, is appended
+to that release's notes (what changed and which settings the owner has to update). Commit messages end with the Co-Authored-By trailer.
 
 ## OpenTabletDriver facts (verified in its source, v0.6.7 and branches as of 2026-10)
 
