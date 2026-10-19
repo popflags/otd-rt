@@ -134,6 +134,18 @@ namespace RapidTrigger
         /// </summary>
         public double MinimumClick { get; set; }
 
+        /// <summary>
+        /// Experimental, owner's request (2026-10-20): a touchdown click (a press from a lifted pen) goes out no sooner than this
+        /// long after the previous touchdown click, in ms of host time; a touchdown that lands earlier clicks exactly then. Taps
+        /// and drags alike (they cannot be told apart at touchdown). Re-presses without lifting are not delayed and do not count
+        /// (landing double clicks 30-90 ms after a contact, re-presses near the end of a drag). Releases are not delayed; a touch
+        /// that has already ended when its click goes out is clicked for as long as it lasted. At most one click waits: a touch
+        /// that lands before it goes out joins it. The detector itself is unchanged (<see cref="TriggerEngine.Pressed"/>); the
+        /// gated output is <see cref="TriggerEngine.OutputPressed"/> and what <see cref="TriggerEngine.Update(uint, double, double)"/>
+        /// returns. The plugin's default is 500; 0 here so tests and tools measure the detector unless asked. 0 = off.
+        /// </summary>
+        public double TouchdownGate { get; set; }
+
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
 
@@ -180,6 +192,10 @@ namespace RapidTrigger
     /// taps as soon as the fall is provably faster than a drag, and a slow path (fall below a drifting hold
     /// reference) that catches slower deliberate releases while absorbing slow drag dips.
     /// </para>
+    /// <para>
+    /// An optional output stage, the Touchdown Gate, can hold touchdown clicks back after the detector; the detector never sees
+    /// it. <see cref="Pressed"/> is the detector's state, <see cref="OutputPressed"/> what the tablet should report.
+    /// </para>
     /// </summary>
     public sealed class TriggerEngine
     {
@@ -217,6 +233,23 @@ namespace RapidTrigger
         private double _pressLow;
         private bool _lastSampleFell;
 
+        // Touchdown Gate (output stage), on host time: when the last touchdown click went out (or will, while it waits).
+        private double _hostMs;
+        private double _lastTouchdownMs = double.NegativeInfinity;
+
+        // A touchdown click waiting for the gate: when it goes out, when the engine last pressed for it, and the release the
+        // engine made before it went out (None while the engine is pressed) with the click length it saw.
+        private bool _clickWaiting;
+        private double _clickDueMs;
+        private double _clickPressedMs;
+        private TriggerEvent _clickRelease;
+        private double _clickLengthMs;
+
+        // A waiting click that went out after its touch ended: it is released after its own length.
+        private bool _replaying;
+        private double _replayEndMs;
+        private TriggerEvent _replayRelease;
+
         public TriggerEngine(TriggerSettings settings)
         {
             _settings = settings.Clone();
@@ -224,7 +257,23 @@ namespace RapidTrigger
 
         public TriggerSettings Settings => _settings.Clone();
 
+        /// <summary>The detector's tip state (see <see cref="OutputPressed"/> for what to report).</summary>
         public bool Pressed { get; private set; }
+
+        /// <summary>The tip state to report: <see cref="Pressed"/>, except while the Touchdown Gate holds a click back.</summary>
+        public bool OutputPressed { get; private set; }
+
+        /// <summary>What the detector decided on the last report (the output event can differ while the Touchdown Gate waits).</summary>
+        public TriggerEvent DetectedEvent { get; private set; }
+
+        /// <summary>
+        /// Host time until a click held back by the Touchdown Gate goes out (or a replayed one ends), in ms; negative when
+        /// nothing waits. The plugin arms a timer with it so the click goes out even when no report arrives.
+        /// </summary>
+        public double OutputDueInMs
+            => _replaying ? Math.Max(0, _replayEndMs - _hostMs)
+               : _clickWaiting ? Math.Max(0, _clickDueMs - _hostMs)
+               : -1;
 
         /// <summary>Hold reference while pressed, trough while released.</summary>
         public double Anchor => _anchor;
@@ -256,9 +305,132 @@ namespace RapidTrigger
             HoldReference = 0;
             FallExcess = 0;
             HeldTime = 0;
+            // The gate keeps its clock and the last touchdown; a click still waiting is dropped with the pen.
+            OutputPressed = false;
+            DetectedEvent = TriggerEvent.None;
+            _clickWaiting = false;
+            _replaying = false;
         }
 
-        public TriggerEvent Update(uint pressure, double elapsedMs)
+        /// <summary>One report: raw pressure and the time since the previous report (also used as host time).</summary>
+        public TriggerEvent Update(uint pressure, double elapsedMs) => Update(pressure, elapsedMs, elapsedMs);
+
+        /// <summary>
+        /// One report. <paramref name="elapsedMs"/> drives the detector (the plugin caps it at 50 ms and may take it from the
+        /// tablet's sample counter); <paramref name="hostElapsedMs"/> is the uncapped PC time since the previous report or
+        /// <see cref="Tick"/>, which the Touchdown Gate runs on. Returns the output event (the detected one when the gate is off).
+        /// </summary>
+        public TriggerEvent Update(uint pressure, double elapsedMs, double hostElapsedMs)
+        {
+            var detected = Detect(pressure, elapsedMs);
+            DetectedEvent = detected;
+            if (!(_settings.TouchdownGate > 0))
+            {
+                OutputPressed = Pressed;
+                return detected;
+            }
+            if (hostElapsedMs > 0)
+                _hostMs += hostElapsedMs;
+            return Gate(detected);
+        }
+
+        /// <summary>
+        /// Advances the Touchdown Gate's clock without a report (the plugin's timer, when no report arrives in time) and returns
+        /// the output event if a held-back click goes out or ends now. The detector does not run.
+        /// </summary>
+        public TriggerEvent Tick(double hostElapsedMs)
+        {
+            DetectedEvent = TriggerEvent.None;
+            if (!(_settings.TouchdownGate > 0))
+                return TriggerEvent.None;
+            if (hostElapsedMs > 0)
+                _hostMs += hostElapsedMs;
+            return Gate(TriggerEvent.None);
+        }
+
+        // Touchdown Gate. At most one output change per report, so a click held back and its release never share a report.
+        private TriggerEvent Gate(TriggerEvent detected)
+        {
+            switch (detected)
+            {
+                case TriggerEvent.Contact:
+                    if (_clickWaiting)
+                    {
+                        // Touched again before its click went out: one click, following this touch.
+                        _clickRelease = TriggerEvent.None;
+                        _clickPressedMs = _hostMs;
+                        break;
+                    }
+                    double due = _lastTouchdownMs + _settings.TouchdownGate;
+                    if (_hostMs >= due && !_replaying)
+                    {
+                        _lastTouchdownMs = _hostMs;
+                        OutputPressed = true;
+                        return TriggerEvent.Contact;
+                    }
+                    _clickWaiting = true;
+                    _clickDueMs = Math.Max(due, _hostMs);
+                    _clickPressedMs = _hostMs;
+                    _clickRelease = TriggerEvent.None;
+                    _lastTouchdownMs = _clickDueMs;
+                    break;
+
+                case TriggerEvent.Rearm:
+                    if (_clickWaiting)
+                    {
+                        _clickRelease = TriggerEvent.None;
+                        _clickPressedMs = _hostMs;
+                    }
+                    else if (_replaying)
+                    {
+                        // Pressed again while the replayed click is down: it stays down and follows the engine from here.
+                        _replaying = false;
+                    }
+                    else if (!OutputPressed)
+                    {
+                        OutputPressed = true;
+                        return TriggerEvent.Rearm;
+                    }
+                    break;
+
+                case TriggerEvent.Release:
+                case TriggerEvent.Lift:
+                case TriggerEvent.FastRelease:
+                    if (_clickWaiting)
+                    {
+                        _clickRelease = detected;
+                        _clickLengthMs = _hostMs - _clickPressedMs;
+                    }
+                    else if (OutputPressed && !_replaying)
+                    {
+                        OutputPressed = false;
+                        return detected;
+                    }
+                    break;
+            }
+
+            if (_replaying && _hostMs >= _replayEndMs)
+            {
+                _replaying = false;
+                OutputPressed = false;
+                return _replayRelease;
+            }
+            if (_clickWaiting && !_replaying && _hostMs >= _clickDueMs)
+            {
+                _clickWaiting = false;
+                OutputPressed = true;
+                if (_clickRelease != TriggerEvent.None)
+                {
+                    _replaying = true;
+                    _replayEndMs = _hostMs + _clickLengthMs;
+                    _replayRelease = _clickRelease;
+                }
+                return TriggerEvent.Contact;
+            }
+            return TriggerEvent.None;
+        }
+
+        private TriggerEvent Detect(uint pressure, double elapsedMs)
         {
             if (!(elapsedMs > 0))
                 elapsedMs = 0;

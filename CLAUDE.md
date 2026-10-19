@@ -197,12 +197,46 @@ fires on the report where the holdoff ends, repeat or not.
   (non-lift releases wait for max(PressHoldoff, MinimumClick)). A held lift is final: it fires when the time is up even if the pen
   is back down, and the next sample is then a fresh contact (a quick re-tap is not merged into the previous click). A held release
   needs reports to fire, so keep it short (the PTK keeps sending zero-pressure reports in hover).
+- `TouchdownGate` (2.12.0, experimental; **plugin default 500 ms, engine/tool default 0** so tests, Tune and Sweep measure the
+  detector): an output stage after the detector (`Pressed` = detector, `OutputPressed` = what is reported; `Update` returns the
+  output event, `DetectedEvent` the detector's). A Contact goes out no sooner than TouchdownGate after the previous Contact's click
+  (host time, uncapped: `Update(p, elapsed, hostElapsed)`; the capped engine clock undercounts range exits). The reference is the
+  click, so a rhythm faster than the gate falls behind. At most one click waits; a Contact or Rearm before it goes out joins it
+  (one click, following the engine). Rearms are never gated and never move the reference (landing double clicks 30–90 ms after a
+  contact; re-presses ~550 ms into drags, which would otherwise delay the next tap by ~430 ms). Releases are not delayed; a click
+  whose touch already ended goes out for the click length the detector saw. One output change per report. The filter arms a
+  one-shot `System.Threading.Timer` (`OutputDueInMs`, +1 ms) and calls `Tick` under a lock shared with `Consume` (like OTD's
+  `AsyncPositionedPipelineElement`), re-emitting the last report with its original position; the lock and timer exist only while
+  the gate is on. Threadpool timers on Windows can be ~15 ms late; reports normally get there first.
 - Defaults (2.7.0, unchanged in 2.8.0; GlitchJump 0 since 2.10.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
   PressHoldoff 8 ms, HoldTime 250 ms,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-20 action patterns and the Touchdown Gate (2.12.0), same 23 min diagnostics (`rt-20261020-002836.csv`).** Owner: "a new
+editable number that wont allow fast taps to go actuate below 500ms by default … if a tap is pressed earlier, it actuates at 500ms";
+"check … tap tap drag, tap drag, drag tap tap, see if they're doing fine as they're likely all about the same 500ms"; asked for a
+blanket version and a tap-specific one, then "no x/y detection in this plugin. go for blanket then". Analysis: `scratch/patterns.py`.
+- Touches split cleanly: taps < 200 ms (568, median 79 ms), drags 500–1000 ms (351, median 635; release a median 578 ms after the
+  touch), few in between. Sequences (onsets < 1 s apart): D 201, T 118, **TD 103**, TT 19, TTD 15, long T…TD runs.
+- Onset-to-onset: **T→T median 528 ms** (p10 420, 84 of 278 under 500), **T→D median 432** (p10 364, 113 of 148 under 500),
+  D→T 522–650 when < 1 s (the tap comes ~40–65 ms after the drag lifts), D→D ~1100. Drags after a tap land ~70–90 ms earlier than
+  taps do; that is the one pattern not at ~500.
+- Re-presses without lifting: in taps 13 (30–94 ms after the touch, landing double clicks); in drags 63, ~552 ms after the drag's
+  touch, release → re-press 18–62 ms, lift ~113 ms later. Rebound before them: ≥ 300 raw in 28 of 58 (drag into tap), < 100 raw in 13
+  (probably two-stage lifts registering an extra click). Not changed (a higher activation would slow re-presses).
+- Tap-specific gate not possible from pressure: inside the 500 ms window drags land 360–460 ms after the previous touch and taps
+  400–490; landing pressure overlaps (at +4 ms drags 2900–4800, taps 1600–8191); pen movement at touchdown (game logs, x/y) overlaps
+  too, and the owner ruled out x/y detection.
+- Gate 500 replayed with the owner's settings (`rt replay … --set TouchdownGate=500`): diagnostics log 255 of 935 touchdown clicks
+  held, p50 105 / p90 239 / max 467 ms; per pair (simulation): T→T 125 of 277 held (p50 114 ms), **T→D 116 of 148 (p50 98)**, D→T 4.
+  A rhythm slightly under 500 falls behind: the run at 418.4 s (27 touches, intervals 360–576, mean ~490) ends 366 ms behind the hand.
+  Touches merged into a waiting click (fast bursts 150–210 ms apart): 1 on the diagnostics log, 7 on game2 (129.7, 130.3, 142.7,
+  196.2–196.8 s), 1–2 elsewhere. 480: 204 held (p50 81); 450: 160 (p50 53). Gate 0: every recording replays identically to 2.11.1.
+- A touch that ended before its click went out needs reports until the click: 8 of 90 such cases had a report gap > 20 ms (pen
+  out of range) → the timer.
 
 **2026-10-20 live diagnostics, Windows (a12b3929, 2.11.0 with the owner's settings, Minimum Click 0), 23 min
 (`rt-20261020-002836.csv`; rhythmic sections in `recordings/play-ptk670-2ms-rhythm-20261020.csv`); 2.11.1.** Owner: "I dont think my

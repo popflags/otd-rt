@@ -10,6 +10,7 @@ from anywhere; paths are arguments. The current state, file locations and proced
 | `common.py` | Shared loader for the three CSV formats (diagnostics, `tools/td2csv.py`, `td_full.py`), touch splitting, `rt --events` parsing. |
 | `td_full.py TABLET_DATA.txt OUT.csv` | OTD Tablet Debugger log to a per-report CSV with engine_ms, pressure, x, y, status, hover distance, host time. `tools/td2csv.py` writes the lean replay format; use this one when hover / tip bit matter. |
 | `diag_taps.py DIAG.csv [--runs] [--from S --to S]` | Live diagnostics: per-tap press / release timing on the PC clock, late presses, click lengths, and rhythmic runs (interval median, steadiest stretch, press-to-press = touch-to-touch). |
+| `patterns.py DIAG.csv [--gate MS,...] [--split MS]` | Tap / drag sequences (T, TD, TTD …), onset intervals per pattern, re-presses inside taps and drags, and what a Touchdown Gate would hold back per pattern (same rule as the engine). |
 | `touch_check.py CSV [--dotnet D] [--rt rt.dll] [--set Name=V ...]` | Replays a log with `rt` and checks that every touch with pressure is pressed, and how soon. |
 | `dips.py CSV [--fall 250] [--rebound 100]` | In-stroke dips with their fastest 10 ms fall: how `tools/Tune`'s re-click / drag-dip labels were found. |
 | `glitches.py CSV [--min 2500]` | One- or two-sample firmware pressure glitches and the largest genuine per-sample change. Its largest-rise figure also counts what is left of 3-sample glitches. |

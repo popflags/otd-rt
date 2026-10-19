@@ -12,11 +12,12 @@ namespace RtTool
     /// </summary>
     public sealed class PressureLog
     {
-        public PressureLog(string name, double[] time, uint[] pressure)
+        public PressureLog(string name, double[] time, uint[] pressure, double[]? hostTime = null)
         {
             Name = name;
             Time = time;
             Pressure = pressure;
+            HostTime = hostTime ?? time;
         }
 
         public string Name { get; }
@@ -25,6 +26,12 @@ namespace RtTool
         public double[] Time { get; }
 
         public uint[] Pressure { get; }
+
+        /// <summary>
+        /// PC clock in ms (t_ms of diagnostics logs, uncapped; the same as <see cref="Time"/> for other logs): the Touchdown
+        /// Gate runs on it, like the plugin.
+        /// </summary>
+        public double[] HostTime { get; }
 
         public int Count => Pressure.Length;
 
@@ -35,6 +42,7 @@ namespace RtTool
             var lines = File.ReadAllLines(path);
             var header = lines.FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim() ?? string.Empty;
             var times = new List<double>();
+            var hosts = new List<double>();
             var values = new List<uint>();
             var culture = CultureInfo.InvariantCulture;
 
@@ -50,9 +58,11 @@ namespace RtTool
                     var parts = line.Split(',');
                     if (parts.Length > Math.Max(1, timeColumn)
                         && double.TryParse(parts[timeColumn], NumberStyles.Float, culture, out var t)
+                        && double.TryParse(parts[0], NumberStyles.Float, culture, out var host)
                         && uint.TryParse(parts[1], NumberStyles.Integer, culture, out var p))
                     {
                         times.Add(t);
+                        hosts.Add(host);
                         values.Add(p);
                     }
                 }
@@ -89,7 +99,8 @@ namespace RtTool
                 throw new InvalidDataException($"No pressure samples found in '{path}'.");
 
             double t0 = times[0];
-            return new PressureLog(Path.GetFileName(path), times.Select(t => t - t0).ToArray(), values.ToArray());
+            double[]? hostTime = hosts.Count == values.Count ? hosts.Select(h => h - hosts[0]).ToArray() : null;
+            return new PressureLog(Path.GetFileName(path), times.Select(t => t - t0).ToArray(), values.ToArray(), hostTime);
         }
     }
 }

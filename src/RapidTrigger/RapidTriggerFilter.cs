@@ -1,6 +1,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Numerics;
+using System.Threading;
 using OpenTabletDriver.Plugin;
 using OpenTabletDriver.Plugin.Attributes;
 using OpenTabletDriver.Plugin.Output;
@@ -26,6 +28,18 @@ namespace RapidTrigger
         // Sum of the elapsed times given to the engine (recorded so a replay sees the same timing).
         private double _engineMs;
 
+        // Touchdown Gate: a click it holds back goes out on a later report, or from this timer when no report arrives in time
+        // (pen out of range). Consume and the timer then share a lock, like OpenTabletDriver's own async filters; the timer
+        // re-emits the last report with its original position. Null while the gate is off.
+        private readonly object _sync = new();
+        private Timer? _gateTimer;
+        private bool _disposed;
+        private long _hostTicks;
+        private long _armedTicks;
+        private ITabletReport? _lastReport;
+        private Vector2 _lastPosition;
+        private uint _lastRaw;
+
         public event Action<IDeviceReport>? Emit;
 
         // First in the chain: no other filter can alter or delay pressure before the decision is made.
@@ -44,6 +58,19 @@ namespace RapidTrigger
 
         public void Consume(IDeviceReport value)
         {
+            if (TouchdownGate > 0)
+            {
+                lock (_sync)
+                    ConsumeReport(value);
+            }
+            else
+            {
+                ConsumeReport(value);
+            }
+        }
+
+        private void ConsumeReport(IDeviceReport value)
+        {
             if (value is ITabletReport report)
             {
                 _engine ??= CreateEngine();
@@ -54,16 +81,22 @@ namespace RapidTrigger
                 if (UseFirmwareSampleClock)
                     elapsed = SampleClockElapsed(value, elapsed);
                 _engineMs += elapsed;
+                double hostElapsed = _hostTicks == 0 ? 0 : (now - _hostTicks) * TickToMs;
+                _hostTicks = now;
 
                 uint raw = report.Pressure;
-                var ev = _engine.Update(raw, elapsed);
-
-                if (_engine.Pressed)
-                    report.Pressure = PreservePressure ? Math.Max(raw, 1u) : _maxPressure;
-                else
-                    report.Pressure = 0;
+                var ev = _engine.Update(raw, elapsed, hostElapsed);
+                report.Pressure = OutputPressure(raw);
 
                 _recorder?.Record(now, _engineMs, raw, _engine, ev);
+
+                if (_gateTimer != null)
+                {
+                    _lastReport = report;
+                    _lastPosition = report.Position;
+                    _lastRaw = raw;
+                    ArmGateTimer(now);
+                }
             }
             else if (value is OutOfRangeReport)
             {
@@ -72,6 +105,54 @@ namespace RapidTrigger
             }
 
             Emit?.Invoke(value);
+        }
+
+        private uint OutputPressure(uint raw)
+            => _engine!.OutputPressed ? (PreservePressure ? Math.Max(raw, 1u) : _maxPressure) : 0;
+
+        // One-shot fallback a little after a held-back click is due: reports normally get there first and the timer finds
+        // nothing to do. Re-armed only when the due time moves.
+        private void ArmGateTimer(long now)
+        {
+            double due = _engine!.OutputDueInMs;
+            if (due < 0)
+            {
+                if (_armedTicks != 0)
+                {
+                    _gateTimer!.Change(Timeout.Infinite, Timeout.Infinite);
+                    _armedTicks = 0;
+                }
+                return;
+            }
+            long target = now + (long)(due / TickToMs);
+            if (_armedTicks != 0 && Math.Abs(target - _armedTicks) * TickToMs < 0.5)
+                return;
+            _armedTicks = target;
+            _gateTimer!.Change((long)Math.Ceiling(due) + 1, Timeout.Infinite);
+        }
+
+        private void OnGateTimer(object? state)
+        {
+            lock (_sync)
+            {
+                _armedTicks = 0;
+                if (_disposed || _engine == null || _lastReport == null)
+                    return;
+
+                long now = Stopwatch.GetTimestamp();
+                double hostElapsed = (now - _hostTicks) * TickToMs;
+                _hostTicks = now;
+                var ev = _engine.Tick(hostElapsed);
+                if (ev != TriggerEvent.None)
+                {
+                    // Filters after this one and the output mode changed the last report in place; restore what came in.
+                    _lastReport.Position = _lastPosition;
+                    _lastReport.Pressure = OutputPressure(_lastRaw);
+                    _recorder?.Record(now, _engineMs, _lastRaw, _engine, ev);
+                    Emit?.Invoke(_lastReport);
+                }
+                ArmGateTimer(now);
+            }
         }
 
         private double SampleClockElapsed(IDeviceReport report, double hostElapsed)
@@ -114,7 +195,11 @@ namespace RapidTrigger
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
                 HoldReleaseMultiplier = HoldReleaseMultiplier,
+                TouchdownGate = TouchdownGate,
             };
+
+            if (TouchdownGate > 0)
+                _gateTimer = new Timer(OnGateTimer, null, Timeout.Infinite, Timeout.Infinite);
 
             if (EnableDiagnostics)
             {
@@ -137,6 +222,12 @@ namespace RapidTrigger
 
         public void Dispose()
         {
+            lock (_sync)
+            {
+                _disposed = true;
+                _gateTimer?.Dispose();
+                _gateTimer = null;
+            }
             _recorder?.Dispose();
             _recorder = null;
         }
@@ -224,6 +315,13 @@ namespace RapidTrigger
             "taps very short clicks, and a game that reads the button once per frame can miss a click shorter than a\n" +
             "frame (60 fps: 16.7 ms). Applies to taps, brushes and re-presses alike. Keep it under ~50 ms. 0 = off.")]
         public double MinimumClick { set; get; }
+
+        [Property("Touchdown Gate"), DefaultPropertyValue(500.0), Unit("ms"), ToolTip(
+            "Experimental. A touchdown (pen coming down from the air) clicks no sooner than this long after the previous\n" +
+            "touchdown's click; one that lands earlier clicks exactly then. Taps and drags alike (they cannot be told apart\n" +
+            "at touchdown). Counts from the previous click, so tapping faster than this falls behind. Re-presses without\n" +
+            "lifting and releases are not delayed; a tap that already ended clicks for as long as it lasted. 0 = off.")]
+        public double TouchdownGate { set; get; } = 500;
 
         [Property("Release Distance"), DefaultPropertyValue(600.0), Unit("raw"), ToolTip(
             "Slow path: pressure fall below the hold reference that releases at any speed.\n" +

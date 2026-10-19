@@ -40,8 +40,9 @@ static void PrintUsage()
         Record logs with "Enable Diagnostics" in the plugin (written to ~/rapid-trigger-logs).
         Legacy "Timestamp,X,Y,Pressure" logs and plain one-value-per-line logs are also accepted.
         Replays use the time the plugin's engine was given (engine_ms column when present, otherwise
-        t_ms with each report capped at 50 ms like the plugin). Reports repeating the last pressure
-        value are not new samples; statistics (noise, start of a descent) use samples only.
+        t_ms with each report capped at 50 ms like the plugin); the Touchdown Gate runs on t_ms uncapped.
+        Reports repeating the last pressure value are not new samples; statistics (noise, start of a
+        descent) use samples only. Events are the plugin's output (after the Touchdown Gate).
 
         rt replay <log>... [--set Name=Value]... [--events] [--rate Hz]
             Run the plugin logic over each log and print presses, releases, release timing,
@@ -57,7 +58,7 @@ static void PrintUsage()
 
         Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, DropoutPressure, GlitchJump, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
         ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, TapAllowance, RepressAllowance, PressHoldoff, MinimumClick, PressDriftTimeConstant,
-        HoldTime, HoldReleaseMultiplier.
+        HoldTime, HoldReleaseMultiplier, TouchdownGate (0 here unless set; the plugin's default is 500).
 
         Other options:
             --lift-window ms   time after a release in which pressure must reach the lift
@@ -90,6 +91,13 @@ static int Replay(Options o)
                           $"(fast {result.Count(TriggerEvent.FastRelease)}, distance {result.Count(TriggerEvent.Release)}, lift {result.Count(TriggerEvent.Lift)})");
 
         PrintTimings("   release timing", Analysis.ReleaseTimings(result));
+
+        if (settings.TouchdownGate > 0)
+        {
+            var held = result.GateDelays.Where(d => d > 0).ToList();
+            Console.WriteLine($"   touchdown gate {settings.TouchdownGate:F0} ms (PC clock): {held.Count} of {result.GateDelays.Count} touchdown clicks held back" +
+                              (held.Count == 0 ? "" : $", by p50 {Analysis.Percentile(held, 0.5):F0} / p90 {Analysis.Percentile(held, 0.9):F0} / max {held.Max():F0} ms"));
+        }
 
         var leads = Analysis.LeadBeforeLift(result, o.LiftWindow);
         if (leads.Count > 0)

@@ -11,16 +11,22 @@ namespace RtTool
 
     public sealed class ReplayResult
     {
-        public ReplayResult(PressureLog log, TriggerSettings settings, List<EventRecord> events)
+        public ReplayResult(PressureLog log, TriggerSettings settings, List<EventRecord> events, List<double>? gateDelays = null)
         {
             Log = log;
             Settings = settings;
             Events = events;
+            GateDelays = gateDelays ?? new List<double>();
         }
 
         public PressureLog Log { get; }
         public TriggerSettings Settings { get; }
+
+        /// <summary>Output events (after the Touchdown Gate), as the plugin sends them.</summary>
         public List<EventRecord> Events { get; }
+
+        /// <summary>Touchdown Gate: for each touchdown click, ms (PC clock) from the detected touchdown to the click (0 = not held).</summary>
+        public List<double> GateDelays { get; }
 
         public int Count(TriggerEvent ev) => Events.Count(e => e.Event == ev);
         public int Presses => Events.Count(e => e.Event is TriggerEvent.Contact or TriggerEvent.Rearm);
@@ -35,18 +41,30 @@ namespace RtTool
         {
             var engine = new TriggerEngine(settings);
             var events = new List<EventRecord>();
+            var gateDelays = new List<double>();
             double previous = log.Time[0];
+            double previousHost = log.HostTime[0];
+            double heldSince = double.NaN;
 
             for (int i = 0; i < log.Count; i++)
             {
                 double t = log.Time[i];
-                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs));
+                double host = log.HostTime[i];
+                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs), host - previousHost);
                 previous = t;
+                previousHost = host;
+                if (engine.DetectedEvent == TriggerEvent.Contact && ev != TriggerEvent.Contact && double.IsNaN(heldSince))
+                    heldSince = host;
+                if (ev == TriggerEvent.Contact)
+                {
+                    gateDelays.Add(double.IsNaN(heldSince) ? 0 : host - heldSince);
+                    heldSince = double.NaN;
+                }
                 if (ev != TriggerEvent.None)
                     events.Add(new EventRecord(i, t, ev, log.Pressure[i], engine.HoldReference, engine.CurrentReleaseDistance));
             }
 
-            return new ReplayResult(log, settings, events);
+            return new ReplayResult(log, settings, events, gateDelays);
         }
 
         /// <summary>

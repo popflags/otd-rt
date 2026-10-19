@@ -51,6 +51,13 @@ the samples alone, and a tablet with a new value on every report is unaffected.
   two-sample glitches like 8191 → 692 → 8191 while pressed hard): it waits up to **Dropout Time** and is ignored if
   pressure comes back.
 
+**Touchdown Gate** (experimental, default 500 ms): after the detector, a touchdown click (the pen coming down from the air)
+goes out no sooner than this long after the previous touchdown's click; a touchdown that lands earlier clicks exactly then. Taps
+and drags alike, since they cannot be told apart at touchdown. It counts from the previous *click*, so tapping faster than the gate
+falls behind (each held click pushes the next one). Re-presses without lifting and releases are not delayed; a tap that already
+ended when its click goes out is clicked for as long as it lasted, and a touch that lands while a click is waiting joins it. It
+runs on the PC clock, and a timer sends the click if no report arrives in time (pen out of range). 0 = off.
+
 While pressed, the plugin reports **full pressure** (unless *Preserve Pressure* is on). The tip
 binding therefore fires on the very first pressed report, whatever the tip threshold in the Bindings
 tab is set to.
@@ -157,6 +164,7 @@ logs are accepted too.
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
 | Tap Allowance / Re-press Allowance | 0.4 / 0.5 | The drag allowance starts at this fraction after a contact / a re-press and ramps to full over Hold Time: taps release earlier, holds get the full allowance. 1 = off. |
 | Minimum Click | 0 (off) | Every click (taps, brushes, re-presses) lasts at least this long; releases, lifts included, wait until then. For games that read the button once per frame and miss clicks shorter than a frame (rapid releases make quick taps ~12 ms clicks; 60 fps = 16.7 ms frames). A lift held back still fires when the time is up and the next sample is a new contact. Keep it under ~50 ms. |
+| Touchdown Gate | 500 ms | Experimental. A touchdown clicks no sooner than this after the previous touchdown's click (taps and drags; counts from the click, so a faster rhythm falls behind). Re-presses without lifting and releases are not delayed. 0 = off. |
 | Press Holdoff | 8 ms | Only a lift releases this soon after a press (landing bounces); a release due inside it is dropped if pressure has come back up by the re-press distance and is rising when it ends. 0 = off. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |

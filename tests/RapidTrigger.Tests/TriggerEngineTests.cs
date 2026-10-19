@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Xunit;
 
@@ -414,6 +415,157 @@ namespace RapidTrigger.Tests
             var events = Signals.Run(engine, Signals.Samples(2, 0, 8191, 8191, 0, 550, 1938, 2270, 2410));
 
             Assert.Equal((8, TriggerEvent.Contact), events.Single());
+        }
+
+        private static TriggerSettings Gate500()
+        {
+            var s = Owner20261019Game();
+            s.TouchdownGate = 500;
+            return s;
+        }
+
+        // A 12 ms tap and a drag held for ms, as 2 ms samples (2 reports each, 1 ms apart), ending in zeros.
+        private static double[] GateTap() => Signals.Samples(2, 2500, 3500, 4000, 3900, 3200, 2000, 800, 0).ToArray();
+
+        private static double[] GateDrag(int ms) => Signals.Samples(2, new[] { 2500.0, 4000 }
+            .Concat(Enumerable.Range(0, ms / 2).Select(i => 4000.0 - i % 2 * 4))
+            .Concat(new[] { 3800.0, 3000, 1800, 600, 0 }).ToArray()).ToArray();
+
+        // Touches placed at report indices on a hovering pen (pressure 0), one report per ms.
+        private static double[] Timeline(int length, params (int Start, double[] Touch)[] touches)
+        {
+            var t = new double[length];
+            foreach (var (start, touch) in touches)
+                touch.CopyTo(t, start);
+            return t;
+        }
+
+        // Runs a timeline on a fresh engine after one hovering report: report i is at host time i + 2 ms.
+        private static List<(int Index, TriggerEvent Event)> RunGate(TriggerSettings settings, double[] timeline, out TriggerEngine engine)
+        {
+            engine = Engine(settings);
+            engine.Update(0, 1);
+            return Signals.Run(engine, timeline);
+        }
+
+        [Fact]
+        public void TouchdownGateOffOrNeverReachedChangesNothing()
+        {
+            var timeline = Timeline(2000, (0, GateTap()), (520, GateDrag(500)), (1100, GateTap()), (1600, GateTap()));
+            var off = RunGate(Owner20261019Game(), timeline, out _);
+            var on = RunGate(Gate500(), timeline, out _);
+            Assert.Equal(off, on);
+
+            var engine = Engine(Owner20261019Game());
+            foreach (double v in timeline)
+            {
+                engine.Update((uint)v, 1);
+                Assert.Equal(engine.Pressed, engine.OutputPressed);
+                Assert.Equal(-1, engine.OutputDueInMs);
+            }
+        }
+
+        [Fact]
+        public void TouchdownGatePressesAnEarlyDragExactlyAtTheGateAndReleasesItWhenTheEngineDoes()
+        {
+            // rt-20261020-002836: tap -> drag median 432 ms apart. The drag lands 300 ms after the tap's click.
+            var timeline = Timeline(1100, (0, GateTap()), (300, GateDrag(500)));
+            var off = RunGate(Owner20261019Game(), timeline, out _);
+            var on = RunGate(Gate500(), timeline, out var engine);
+
+            Assert.Equal((300, TriggerEvent.Contact), off[2]);
+            Assert.Equal(new[] { off[0], off[1], (500, TriggerEvent.Contact), off[3] }, on);
+            Assert.False(engine.OutputPressed);
+        }
+
+        [Fact]
+        public void TouchdownGateClicksATapThatEndedEarlyAtTheGateForItsOwnLength()
+        {
+            var timeline = Timeline(700, (0, GateTap()), (300, GateTap()));
+            var off = RunGate(Owner20261019Game(), timeline, out _);
+            var on = RunGate(Gate500(), timeline, out _);
+
+            Assert.Equal(4, off.Count);
+            int length = off[3].Index - off[2].Index;
+            Assert.Equal(new[] { off[0], off[1], (500, TriggerEvent.Contact), (500 + length, off[3].Event) }, on);
+        }
+
+        [Fact]
+        public void TouchdownGateCountsFromTheLastClickSoAFastRhythmFallsBehind()
+        {
+            // Touches every 480 ms with a 500 ms gate: clicks at 0, 500, 1000 (the rule is about the clicks the game sees).
+            var timeline = Timeline(1100, (0, GateTap()), (480, GateTap()), (960, GateTap()));
+            var on = RunGate(Gate500(), timeline, out _);
+            Assert.Equal(new[] { 0, 500, 1000 }, on.Where(e => e.Event == TriggerEvent.Contact).Select(e => e.Index));
+        }
+
+        [Fact]
+        public void TouchdownGateLeavesRePressesWithoutLiftingAlone()
+        {
+            // A drag with a release and re-press 200 ms after its click (drag into tap; landing double clicks come 30-90 ms in),
+            // 300 ms after the previous tap's click. The re-press goes out with the detector and does not move the gate.
+            var drag = Signals.Samples(2, new[] { 2500.0, 4000 }
+                .Concat(Enumerable.Range(0, 100).Select(i => 4000.0 - i % 2 * 4))
+                .Concat(new double[] { 3800, 3400, 2900, 2500, 2300, 2350, 2500, 2800, 3200, 3500 })
+                .Concat(Enumerable.Range(0, 150).Select(i => 3500.0 - i % 2 * 4))
+                .Concat(new double[] { 3000, 1800, 600, 0 }).ToArray()).ToArray();
+            var timeline = Timeline(1300, (0, GateTap()), (300, drag), (1000, GateTap()));
+            var off = RunGate(Owner20261019Game(), timeline, out _);
+            var on = RunGate(Gate500(), timeline, out _);
+
+            var rearm = off.Single(e => e.Event == TriggerEvent.Rearm);
+            Assert.Contains(rearm, on);
+            Assert.Contains((500, TriggerEvent.Contact), on);
+            // The next tap is 500 ms after the drag's click (at 500), not after the re-press: not delayed.
+            Assert.Contains((1000, TriggerEvent.Contact), on);
+            Assert.Equal(off.Count, on.Count);
+        }
+
+        [Fact]
+        public void TouchdownGateMergesATouchThatLandsBeforeTheWaitingClickGoesOut()
+        {
+            // A quick tap at 300 and another touch at 400 that is still held at 500: one click from 500 until the second ends.
+            var timeline = Timeline(900, (0, GateTap()), (300, GateTap()), (400, GateDrag(300)));
+            var off = RunGate(Owner20261019Game(), timeline, out _);
+            var on = RunGate(Gate500(), timeline, out var engine);
+
+            Assert.Equal(6, off.Count);
+            Assert.Equal(new[] { off[0], off[1], (500, TriggerEvent.Contact), off[5] }, on);
+            Assert.False(engine.OutputPressed);
+        }
+
+        [Fact]
+        public void TouchdownGateClickGoesOutOnTickWhenNoReportArrives()
+        {
+            // The pen leaves range right after the early tap (no more reports): the plugin's timer calls Tick.
+            var timeline = Timeline(320, (0, GateTap()), (300, GateTap()));
+            var off = RunGate(Owner20261019Game(), timeline, out _);
+            RunGate(Gate500(), timeline, out var engine);
+            int length = off[3].Index - off[2].Index;
+
+            // The first click went out at 2 ms, the last report was at 321 ms: due at 502.
+            Assert.Equal(181, engine.OutputDueInMs, 6);
+            Assert.Equal(TriggerEvent.None, engine.Tick(180.5));
+            Assert.Equal(TriggerEvent.Contact, engine.Tick(0.5));
+            Assert.True(engine.OutputPressed);
+            Assert.Equal(length, engine.OutputDueInMs, 6);
+            Assert.Equal(off[3].Event, engine.Tick(length));
+            Assert.False(engine.OutputPressed);
+            Assert.Equal(-1, engine.OutputDueInMs);
+        }
+
+        [Fact]
+        public void TouchdownGateRunsOnHostTimeNotTheCappedEngineTime()
+        {
+            // The pen left range between the taps: the engine got 50 ms for the gap, the PC clock 450 ms.
+            var engine = Engine(Gate500());
+            engine.Update(0, 1);
+            var first = Signals.Run(engine, GateTap());
+            Assert.Equal(TriggerEvent.Contact, first[0].Event);
+            for (int i = 0; i < 40; i++)
+                engine.Update(0, 1);
+            engine.Update(0, 50, 450);
+            Assert.Equal(TriggerEvent.Contact, engine.Update(2500, 1));
         }
 
         [Fact]

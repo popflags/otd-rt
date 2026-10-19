@@ -16,8 +16,9 @@ namespace RapidTrigger
     {
         private readonly struct Sample
         {
-            public Sample(long ticks, double engineMs, uint raw, bool pressed, TriggerEvent ev, double anchor, double holdReference, double releaseDistance, double fallExcess)
+            public Sample(long ticks, double engineMs, uint raw, bool pressed, TriggerEvent ev, double anchor, double holdReference, double releaseDistance, double fallExcess, TriggerEvent detected)
             {
+                Detected = detected;
                 Ticks = ticks;
                 EngineMs = engineMs;
                 Raw = raw;
@@ -38,11 +39,14 @@ namespace RapidTrigger
             public readonly float HoldReference;
             public readonly float ReleaseDistance;
             public readonly float FallExcess;
+            public readonly TriggerEvent Detected;
         }
 
         // t_ms: host time of the report. engine_ms: sum of the elapsed times the engine was given (host time capped at
         // 50 ms per report, or the Firmware Sample Clock); RtTool replays with it so the replay sees the driver's timing.
-        public const string Header = "t_ms,raw,pressed,event,anchor,hold_reference,release_distance,fall_excess,engine_ms";
+        // pressed / event: what the plugin output (after the Touchdown Gate); detected: the detector's event on that report.
+        // A row written by the Touchdown Gate's timer (no report arrived) repeats the last raw value and engine_ms.
+        public const string Header = "t_ms,raw,pressed,event,anchor,hold_reference,release_distance,fall_excess,engine_ms,detected";
 
         private readonly Channel<Sample> _channel;
         private readonly Thread _writer;
@@ -71,7 +75,7 @@ namespace RapidTrigger
         }
 
         public void Record(long ticks, double engineMs, uint raw, TriggerEngine engine, TriggerEvent ev)
-            => _channel.Writer.TryWrite(new Sample(ticks, engineMs, raw, engine.Pressed, ev, engine.Anchor, engine.HoldReference, engine.CurrentReleaseDistance, engine.FallExcess));
+            => _channel.Writer.TryWrite(new Sample(ticks, engineMs, raw, engine.OutputPressed, ev, engine.Anchor, engine.HoldReference, engine.CurrentReleaseDistance, engine.FallExcess, engine.DetectedEvent));
 
         private void WriteLoop()
         {
@@ -103,7 +107,9 @@ namespace RapidTrigger
                         writer.Write(',');
                         writer.Write(s.FallExcess.ToString("F1", culture));
                         writer.Write(',');
-                        writer.WriteLine(s.EngineMs.ToString("F3", culture));
+                        writer.Write(s.EngineMs.ToString("F3", culture));
+                        writer.Write(',');
+                        writer.WriteLine(((int)s.Detected).ToString(culture));
                     }
                     writer.Flush();
                 }
