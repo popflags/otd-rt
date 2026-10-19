@@ -34,7 +34,8 @@ the samples alone, and a tablet with a new value on every report is unaffected.
   The allowance starts at **Tap Allowance** (40 %) after a contact, or **Re-press Allowance** (50 %) after a
   re-press without lifting, and ramps to full over **Hold Time** (250 ms): taps are over before holds start
   dipping, so they release earlier, while holds and drags get the full allowance once they last. For the first
-  **Press Holdoff** (8 ms) of a press only a lift releases, which absorbs landing bounces.
+  **Press Holdoff** (8 ms) of a press only a lift releases, which absorbs landing bounces. A release that came due inside it
+  is dropped at its end if pressure is rising again and back up by the re-press distance (it would only re-press at once).
   Drag dips are slower than the allowance, so they never add up. A real release starts counting the moment it gets faster than any
   drag, with no smoothing lag. This is Page's CUSUM change detector, the standard quickest-detection
   method for a change in slope.
@@ -151,7 +152,7 @@ logs are accepted too.
 | Fast Fall Percent | 0.19 %/ms | Part of the drag allowance that grows with pressure. Higher = steadier heavy holds, later releases, missed shallow re-presses. Both 0 = fast detector off. |
 | Fast Release Distance | 10 | Excess fall that releases. Lower = earlier releases. ≥ 40 if pressure is really sampled every ms. |
 | Tap Allowance / Re-press Allowance | 0.4 / 0.5 | The drag allowance starts at this fraction after a contact / a re-press and ramps to full over Hold Time: taps release earlier, holds get the full allowance. 1 = off. |
-| Press Holdoff | 8 ms | Only a lift releases this soon after a press (landing bounces). 0 = off. |
+| Press Holdoff | 8 ms | Only a lift releases this soon after a press (landing bounces); a release due inside it is dropped if pressure has come back up by the re-press distance and is rising when it ends. 0 = off. |
 | Release Distance | 600 | Slow-path fall from the hold reference. |
 | Release Ratio / Max Release Distance | 0 / 1000 | Optional proportional slow-path distance. |
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |
@@ -187,6 +188,8 @@ src/AnglePreservingSensitivity/  separate relative-mode plugin (DirectionalScale
 tools/RtTool/             replay + calibration CLI, compiles the same TriggerEngine.cs
 tests/RapidTrigger.Tests/ engine tests on synthetic 1 kHz report streams (pressure every 1, 2, 5 or 9 reports)
 tools/synth_logs.py       synthetic drag/tap logs for experiments
+tools/td2csv.py           OTD Tablet Debugger recording (tablet-data_*.txt) -> CSV for rt replay / tools/Tune
+tools/Tune/               scores settings on the 2 ms gameplay recordings + synthetic 2 ms drags
 recordings/               real recordings for replay and calibration
 ```
 

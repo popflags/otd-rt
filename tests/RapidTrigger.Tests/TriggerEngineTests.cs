@@ -205,6 +205,51 @@ namespace RapidTrigger.Tests
             Assert.Contains(Signals.Run(off, Signals.Samples(1, samples)), e => e.Event == TriggerEvent.Rearm);
         }
 
+        // The owner's settings on the 2026-10-19 Windows gameplay logs (pressure every 2 ms, 2 reports per sample).
+        private static TriggerSettings Owner20261019() => new()
+        {
+            ActivationDistance = 10,
+            ActivationPercent = 1,
+            FastFallSpeed = 40,
+            FastFallPercent = 0,
+            FastReleaseDistance = 30,
+            TapAllowance = 0.1,
+            RepressAllowance = 0.1,
+            PressHoldoff = 12,
+            HoldTime = 400,
+        };
+
+        [Fact]
+        public void HeldBackReleaseIsDroppedWhenPressureHasReboundedByTheHoldoffEnd()
+        {
+            // td1792424513 26.40 s: the landing sample overshoots, pressure dips 369 within 4 ms and comes back. The fall
+            // made a release due inside the 12 ms holdoff; at its end pressure was rising and 279 above the dip, so
+            // releasing there re-pressed on the next sample (a double click). Now it stays one press.
+            var samples = new double[] { 3706, 3353, 3337, 3405, 3459, 3539, 3616, 3670, 3712, 3745, 3776, 3802, 3813, 3820 };
+
+            var engine = Engine(Owner20261019());
+            engine.Update(0, 1);
+            var events = Signals.Run(engine, Signals.Samples(2, samples));
+
+            Assert.Equal((0, TriggerEvent.Contact), events.Single());
+            Assert.True(engine.Pressed);
+        }
+
+        [Fact]
+        public void HeldBackReleaseStillFiresWhenTheTapIsFallingAtTheHoldoffEnd()
+        {
+            // td1792425112 50.30 s: landing overshoot and dip, then the tap's own fall starts right at the holdoff end.
+            // Pressure is above the dip there but falling, so the held-back release fires at 12 ms as before.
+            var samples = new double[] { 5562, 5083, 5290, 5413, 5412, 5377, 5269, 5101, 4756, 4243, 3572, 2585, 1274, 0 };
+
+            var engine = Engine(Owner20261019());
+            engine.Update(0, 1);
+            var events = Signals.Run(engine, Signals.Samples(2, samples));
+
+            Assert.Equal((0, TriggerEvent.Contact), events[0]);
+            Assert.Equal((12, TriggerEvent.FastRelease), events[1]);
+        }
+
         [Fact]
         public void PressHoldoffDelaysOnlyReleasesInsideIt()
         {

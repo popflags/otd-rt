@@ -33,6 +33,8 @@ src/RapidTrigger/FirmwareSampleClock.cs  opt-in report timing from the PTK-670 f
 src/AnglePreservingSensitivity/          separate plugin DLL, own version: relative-mode direction-preserving X:Y speed
 tools/RtTool/                            `rt` CLI: replay + calibrate; compiles TriggerEngine.cs via <Compile Link>
 tools/Sweep/                             `sweep` CLI: scores settings grids on recordings + synthetic signals (how defaults are chosen)
+tools/Tune/                              `tune` CLI: scores settings on the 2 ms gameplay recordings (labelled re-clicks / drag dips) + 2 ms drags
+tools/td2csv.py                          OTD Tablet Debugger log (tablet-data_*.txt) -> CSV with engine_ms from the byte-17 counter
 tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1 kHz reports; --sample-ms N repeats, --samples-only)
 tests/RapidTrigger.Tests/                xunit tests on synthetic 1 kHz report streams (Signals.cs), FirmwareSampleClock tests
 recordings/                              real diagnostics CSVs from the tablet (commit them here)
@@ -50,6 +52,8 @@ dotnet tools/RtTool/bin/Release/net8.0/rt.dll replay <csv>... [--set Name=Value]
 dotnet tools/RtTool/bin/Release/net8.0/rt.dll calibrate --drag <csv>... --tap <csv>... [--margin 0.35]
 python3 tools/synth_logs.py /tmp/syn                 # synthetic logs for quick experiments
 dotnet run -c Release --project tools/Sweep -- "FastFallSpeed=1|1.5|2,FastFallPercent=0.2|0.22"   # score a grid
+dotnet run -c Release --project tools/Tune -- --margin "FastFallSpeed=10|12|14,ActivationPercent=0.5|0.75"  # owner's 2 ms data
+python3 tools/td2csv.py tablet-data_1792424513.txt out.csv     # OTD debugger recording -> replayable CSV
 ```
 
 In cloud sessions `scripts/cloud-setup.sh` installs the SDK (apt `dotnet-sdk-8.0`, falling back to
@@ -173,13 +177,49 @@ fires on the report where the holdoff ends, repeat or not.
 - **Released, Rearm:** rise ≥ `ActivationDistance + ActivationPercent%·trough` (2.3.0).
 - Fast-detector allowance × `TapAllowance` (0.4, after a Contact) or × `RepressAllowance` (0.5, after a Rearm) at
   press start, ramping linearly to × 1 over `HoldTime` (250 ms) (2.6.0, split in 2.7.0).
-- `PressHoldoff` (8 ms, 2.7.0): for this long after any press only Lift releases (detectors keep tracking).
+- `PressHoldoff` (8 ms, 2.7.0): for this long after any press only Lift releases (detectors keep tracking). Since 2.9.0 a
+  release that came due inside it is dropped at its end (detectors restart from that sample) if the last sample did not fall and
+  pressure is back up from its low since the press's peak by the re-press distance: releasing there only re-pressed on the next
+  sample (landing overshoot 3706 -> 3337 -> 3616). A tap whose own fall has started by then still releases at the holdoff end.
 - Defaults (2.7.0, unchanged in 2.8.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
   PressHoldoff 8 ms, HoldTime 250 ms,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-19 gameplay logs (Windows, ring500 83a52e3c, 1000 Hz sync ON), `recordings/play-ptk670-2ms-{a,b}-20261019.csv`; 2.9.0
+and the owner's settings.** Owner: "find my best settings without any light drag cutouts (I mean 0)"; "some reactivations just
+don't count for me in these logs or do not reactivate fast enough"; "initial clicks obviously need to be as fast as possible"; the
+Windows config is the main one (Linux keeps Relative Mode + MouseBinding, Windows VMulti; both get the same Rapid Trigger numbers).
+Scored with `tools/Tune` (columns in its header).
+- Initial clicks: all 185 contacts press on their first sample (first sample ≥ 4 every time); all 11 contacts starting at 8191 are
+  one-sample phantoms. Nothing left to gain on the press side.
+- Landing: the first sample often overshoots and the next one dips 250–530 (e.g. 0 → 4311 → 3038 → 3302 …). With the owner's
+  Tap Allowance 0.1 the dip made a release due inside the 12 ms holdoff, which fired at its end and re-pressed a sample later (5
+  double clicks). The 2.9.0 holdoff rule removes 4 (the 5th, 671 → 1725 → 472 → hold, is a real 1250 fall). Cost: two very short
+  taps (38.16 s, 171.78 s in b) release 6 / 4 ms later, because the old release fired on a rising sample before their fall began.
+  With the defaults it removes in-stroke re-presses on the 2026-10-14 mixed logs (427 → 282, 177 → 170, 328 → 324) and newtip
+  (7 → 5); no contact changes on any recording, the 5 / 9 ms play logs, rt-* and syn_drag are unchanged.
+- In-stroke dips split cleanly by the fastest fall over 10 ms of samples: slow drag dips ≤ 11 raw/ms (one at 13.8; 900–1000 over
+  250–320 ms, pen stays down) vs re-clicks 29.6–65 raw/ms. The previous Windows settings (FastFall 40 raw/ms + 0 %, FRD 30, Activation
+  10 + 1 %) needed one 2 ms sample falling > 80 to release: the 164.7 s re-click (30 raw/ms) never released, the others late. The
+  Linux settings (4 + 0.1 %, FRD 40, Activation 5 + 0.1 %) released 2 slow drag dips and made 17 extra double clicks.
+- Light drags: tools/Sweep's set (dip phase 0 at contact) is too easy at 2 ms; tools/Tune draws the dip phase at random (20 seeds per
+  level, 150–1000, ±10/±15, ±20 reported), landing ramp ending on the drag's own start value (a ramp to the full level then a step to
+  the dip phase is an artefact that cut every config).
+- Result, previous Windows (2.8.2 engine) → **owner's settings since 2026-10-19 (2.9.0): FastFall 12 + 0.2 %, FRD 35, Tap 0.1,
+  Repress 0.3, HoldTime 400, PressHoldoff 12, Activation 10 + 0.75 %, ReleaseDistance 300** (rest unchanged: Contact 4, Lift 2,
+  Phantom 8191 / 20, Dropout 3 / 8190, Ratio 0, Max 1000, Drift 10, PressDrift 0, HoldMult 1, Firmware Sample Clock on):
+  light cut-outs 0 → 0 (also at ±20 and up to 2000), medium 0 → 0, re-clicks caught 5 → 6 of 6, released 18.8 → 34.3 ms before the
+  trough, re-pressed 19.6 (caught ones) → 12.3 ms after it, slow drag dips released 0 → 0 with margin 2.46 → 1.94, tap lead before
+  lift 32.4 → 33.4 ms, hold lead 40 → 54 ms, landing double clicks 5 → 1, other double clicks 3 → 5 (two-stage lifts: a fast fall,
+  a plateau with a +64…+141 wobble, then the lift; and a slow +64 creep on a plateau), synthetic re-presses 952 → 1029.
+- Trade-offs measured: re-press distance 10 + 0.5 % re-presses 2 ms sooner but adds a double click on a three-stage lift (85.9 s,
+  +45 at 5928); 10 + 0 % 5 ms after the trough but 12 double clicks. PressDriftTimeConstant 20–200 barely changes them. Margins
+  1.1–1.5 (e.g. 6 + 0.1 %) release re-clicks up to ~10 ms earlier but are one slightly faster drag dip from a cut-out; ReleaseDistance
+  200 adds ~4 ms on re-clicks, margin 1.76 and a medium-drag cut-out.
+- Defaults were not changed (still tuned for 5 ms; far too sensitive at 2 ms: hundreds of light cut-outs).
 
 **500 Hz pressure firmware (2026-10-14), `recordings/mixed-*-500hz-20261014.csv`:** three unlabelled mixed-use
 recordings (strokes+taps 116 s / 331 strokes, lines+taps 118 s / 267, long drags 174 s / 47 with 7 over 1 s). Host

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>tune</AssemblyName>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Same engine and replay code as the plugin and rt. -->
+    <Compile Include="..\..\src\RapidTrigger\TriggerEngine.cs" Link="TriggerEngine.cs" />
+    <Compile Include="..\RtTool\PressureLog.cs" Link="PressureLog.cs" />
+    <Compile Include="..\RtTool\Analysis.cs" Link="Analysis.cs" />
+  </ItemGroup>
+
+</Project>

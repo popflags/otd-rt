@@ -107,6 +107,8 @@ namespace RapidTrigger
         /// For this long after a press, only a lift releases: the fast and slow detectors keep tracking but cannot fire.
         /// Absorbs landing bounces right after contact (5065 -> 4970 -> 5207 within 6 ms on the 5 ms recording), which
         /// otherwise release and re-press as a double click. Releases of taps shorter than this wait until it ends. 0 = off.
+        /// A release held back by it is dropped when the holdoff ends if pressure is no longer falling and has come back up
+        /// from its low by the re-press distance (it would release and re-press right away).
         /// </summary>
         public double PressHoldoff { get; set; } = 8;
 
@@ -184,6 +186,12 @@ namespace RapidTrigger
         // A release that was due but held back by PressHoldoff (None if none).
         private TriggerEvent _heldOffRelease;
 
+        // Highest pressure since the press, and the lowest since that peak: a held-back release is dropped if pressure has
+        // come back up from that low by the re-press distance and the last sample did not fall.
+        private double _pressPeak;
+        private double _pressLow;
+        private bool _lastSampleFell;
+
         public TriggerEngine(TriggerSettings settings)
         {
             _settings = settings.Clone();
@@ -243,7 +251,7 @@ namespace RapidTrigger
                 {
                     HeldTime += _pendingMs;
                     _pendingMs = 0;
-                    return Release(p, _heldOffRelease);
+                    return Rebounded(p) ? DropHeldOffRelease(p) : Release(p, _heldOffRelease);
                 }
                 return TriggerEvent.None;
             }
@@ -360,6 +368,11 @@ namespace RapidTrigger
                 _anchor += (previous - _anchor) * Follow(elapsedMs, s.DriftTimeConstant);
             if (p > _anchor)
                 _anchor = p;
+            if (p >= _pressPeak)
+                _pressPeak = _pressLow = p;
+            else if (p < _pressLow)
+                _pressLow = p;
+            _lastSampleFell = p < previous;
 
             HoldReference = _anchor;
             CurrentReleaseDistance = ReleaseDistanceFor(_anchor, HeldTime);
@@ -375,8 +388,28 @@ namespace RapidTrigger
                 _heldOffRelease = due;
                 return TriggerEvent.None;
             }
+            if (due != TriggerEvent.None && _heldOffRelease != TriggerEvent.None && Rebounded(p))
+                return DropHeldOffRelease(p);
             _heldOffRelease = TriggerEvent.None;
             return due == TriggerEvent.None ? TriggerEvent.None : Release(p, due);
+        }
+
+        // Landing bounce (contact 3706 -> 3337 -> 3616 within 12 ms on the 2026-10-19 logs): the fall made a release due inside
+        // the holdoff, but pressure is back up by the re-press distance and still rising, so releasing now would re-press
+        // right away. A tap whose own fall has started by then (5562 -> 5083 -> 5413 -> 5377 -> 5269) still releases.
+        private bool Rebounded(double p)
+            => !_lastSampleFell && p > _pressLow
+               && p - _pressLow >= _settings.ActivationDistance + _settings.ActivationPercent * 0.01 * _pressLow;
+
+        // Stays pressed; both detectors start over from here.
+        private TriggerEvent DropHeldOffRelease(double p)
+        {
+            _heldOffRelease = TriggerEvent.None;
+            FallExcess = 0;
+            _anchor = p;
+            HoldReference = p;
+            _pressPeak = _pressLow = p;
+            return TriggerEvent.None;
         }
 
         public double ReleaseDistanceFor(double reference, double heldTime)
@@ -403,6 +436,7 @@ namespace RapidTrigger
             _heldOffRelease = TriggerEvent.None;
             _fresh = false;
             _anchor = p;
+            _pressPeak = _pressLow = p;
             HeldTime = 0;
             FallExcess = 0;
             HoldReference = p;
