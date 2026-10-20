@@ -85,13 +85,15 @@ namespace RapidTrigger
                 double hostElapsed = _hostTicks == 0 ? 0 : (now - _hostTicks) * TickToMs;
                 _hostTicks = now;
 
-                // Side buttons of the PTK firmware's 0x1E reports; the engine only uses their changes with Analog Pen on.
+                // Side buttons of the PTK firmware's 0x1E reports; the engine only uses their changes (and the analog clock's report
+                // gaps, which come first when the pen re-tunes for a button) with Analog Pen on.
                 int buttons = FirmwareSampleClock.PenButtons(value.Raw);
-                bool buttonsChanged = buttons >= 0 && _lastButtons >= 0 && buttons != _lastButtons;
+                bool retuned = buttons >= 0 && _lastButtons >= 0 && buttons != _lastButtons
+                    || UseFirmwareSampleClock && _sampleClock.Gap;
                 _lastButtons = buttons;
 
                 uint raw = report.Pressure;
-                var ev = _engine.Update(raw, elapsed, hostElapsed, buttonsChanged);
+                var ev = _engine.Update(raw, elapsed, hostElapsed, retuned);
                 report.Pressure = OutputPressure(raw);
 
                 _recorder?.Record(now, _engineMs, raw, _engine, ev, buttons, UseFirmwareSampleClock && _sampleClock.Gap);
@@ -396,13 +398,15 @@ namespace RapidTrigger
         [BooleanProperty("Analog Pen (CP923)", ""), DefaultPropertyValue(false), ToolTip(
             "PTK-670 custom firmware with the analog pen (CP923 / Wacom One pen): a new pressure sample on every report.\n" +
             "Firmware Sample Clock then counts 1.000 ms per counter step and adds the report gaps of side-button changes.\n" +
-            "A side-button change steps the pressure (up to ~400 over a few reports): it is taken as the new level, not as\n" +
-            "a release or re-press (see Button Settle Reports). The phantom check is off (this pen makes none).\n" +
+            "A side-button change steps the pressure (up to ~400 over ~10 reports, starting with a report gap the clock sees):\n" +
+            "it is taken as the new level, not as a release or re-press (see Button Settle Reports).\n" +
+            "The phantom check is off (this pen makes none).\n" +
             "Leave off for the Pro Pen 3: its phantom max-pressure contacts would click.")]
         public bool AnalogPen { set; get; }
 
         [Property("Button Settle Reports"), DefaultPropertyValue(10.0), ToolTip(
-            "Analog Pen only: for this many reports after a side-button change, pressure changes are taken as the new level\n" +
+            "Analog Pen only: for this many reports after a side-button change (or the report gap that starts it, with\n" +
+            "Firmware Sample Clock on), pressure changes are taken as the new level\n" +
             "(the firmware ramps the pressure for ~5 reports, then it overshoots for a few more). Lifts still release at once;\n" +
             "a real release in that time is decided when it ends (up to this many ms later). 0 = only the report with the change.")]
         public double ButtonSettleReports { set; get; } = 10;

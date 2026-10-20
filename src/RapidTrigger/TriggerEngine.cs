@@ -195,17 +195,18 @@ namespace RapidTrigger
         /// Analog pen (CP923 on the PTK-670 custom firmware, ring500 9f4a1b39, 2026-10-20): a new pressure sample on every report and
         /// no phantom max-pressure contacts, but every side-button change re-tunes the pen and steps the pressure: p10 / p50 / p90
         /// -160 / +12 / +225 raw (up to -318 / +409) on the report with the new button bits, then a ramp of 85-150 per report for ~5
-        /// reports and an overshoot for ~4 more. On: the phantom check is skipped (a landing at max pressure presses at once), and
-        /// pressure changes on a report flagged as a button change and on the ButtonSettleReports reports after it are taken as the
-        /// new level (<see cref="TriggerEngine.Update(uint, double, double, bool)"/>). Not covered: some button 1 presses (10 of 51 on
-        /// the 2026-10-20 log) fall ~110 per report for 3-6 reports before the new bits arrive, which nothing can tell from a release
-        /// without waiting. Off for the Pro Pen 3 (it makes phantoms, and its buttons do not step the pressure).
+        /// reports and an overshoot for ~4 more. Some button 1 presses fall ~110 per report for 3-6 reports before the new bits arrive;
+        /// the re-tune starts with a 3-5 ms report gap, which the analog Firmware Sample Clock sees. On: the phantom check is skipped
+        /// (a landing at max pressure presses at once), and pressure changes on a report flagged as a re-tune (button change or gap)
+        /// and on the ButtonSettleReports reports after it are taken as the new level
+        /// (<see cref="TriggerEngine.Update(uint, double, double, bool)"/>); a fresh contact ends that window. Off for the Pro Pen 3
+        /// (it makes phantoms, and its buttons do not step the pressure).
         /// </summary>
         public bool AnalogPen { get; set; }
 
         /// <summary>
-        /// Analog pen: for this many reports after a side-button change, pressure changes are taken as the new level rather than as
-        /// falls or rises (the report with the change always is). Counted in reports, not ms: the firmware's ramp is a number of
+        /// Analog pen: for this many reports after a re-tune (side-button change, or the report gap that starts one), pressure changes
+        /// are taken as the new level rather than as falls or rises (the flagged report always is). Counted in reports, not ms: the firmware's ramp is a number of
         /// pen reads, and the report gaps around a button change would use up a time window early. Lifts still release at once; a
         /// real release in the window is decided when it ends. 0 = only the report with the change.
         /// </summary>
@@ -365,12 +366,14 @@ namespace RapidTrigger
             => Update(pressure, elapsedMs, hostElapsedMs, false);
 
         /// <summary>
-        /// One report, as above. <paramref name="buttonsChanged"/>: the pen's side buttons differ from the previous report's.
-        /// Only used with <see cref="TriggerSettings.AnalogPen"/>: the pressure step that comes with it is not a fall or a rise.
+        /// One report, as above. <paramref name="retuned"/>: the analog pen re-tuned on this report (its side buttons differ from
+        /// the previous report's, or reports were missing that the firmware counter did not see: the re-tune starts with such a gap,
+        /// up to ~9 reports before the new button bits). Only used with <see cref="TriggerSettings.AnalogPen"/>: the pressure step
+        /// that comes with it is not a fall or a rise.
         /// </summary>
-        public TriggerEvent Update(uint pressure, double elapsedMs, double hostElapsedMs, bool buttonsChanged)
+        public TriggerEvent Update(uint pressure, double elapsedMs, double hostElapsedMs, bool retuned)
         {
-            var detected = Detect(pressure, elapsedMs, buttonsChanged);
+            var detected = Detect(pressure, elapsedMs, retuned);
             DetectedEvent = detected;
             if (!(_settings.TouchdownGate > 0))
             {
@@ -478,7 +481,7 @@ namespace RapidTrigger
             return TriggerEvent.None;
         }
 
-        private TriggerEvent Detect(uint pressure, double elapsedMs, bool buttonsChanged)
+        private TriggerEvent Detect(uint pressure, double elapsedMs, bool retuned)
         {
             if (!(elapsedMs > 0))
                 elapsedMs = 0;
@@ -488,7 +491,7 @@ namespace RapidTrigger
             bool settling = false;
             if (_settings.AnalogPen)
             {
-                if (buttonsChanged)
+                if (retuned)
                     _settleReports = 0;
                 else if (_settleReports >= 0 && ++_settleReports > _settings.ButtonSettleReports)
                     _settleReports = -1;
@@ -770,6 +773,9 @@ namespace RapidTrigger
             _pressedFromContact = reason == TriggerEvent.Contact;
             _heldOffRelease = TriggerEvent.None;
             _fresh = false;
+            // A re-tune in the air (button change or range-entry gap while hovering) does not freeze the landing that follows.
+            if (_pressedFromContact)
+                _settleReports = -1;
             _anchor = p;
             _pressPeak = _pressLow = p;
             HeldTime = 0;

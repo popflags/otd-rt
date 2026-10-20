@@ -219,13 +219,14 @@ fires on the report where the holdoff ends, repeat or not.
   rise the 2.9.0 holdoff bounce rule needs; with a huge Activation Distance the rule otherwise never triggers. Both exist for the
   owner's no-re-press mode (see the evidence below).
 - `AnalogPen` (2.14.0, default off; bool in `TriggerSettings`, RtTool `--set AnalogPen=true`) with `ButtonSettleReports` (10):
-  `Update(p, elapsed, hostElapsed, buttonsChanged)`, the filter flags a 0x1E report whose status bits 1-3 differ from the previous
-  report's. With the toggle on, that report and the next ButtonSettleReports reports (counted in reports: the firmware's ramp is a
+  `Update(p, elapsed, hostElapsed, retuned)`, the filter flags a 0x1E report whose status bits 1-3 differ from the previous
+  report's, or (2.14.1, Firmware Sample Clock on) one the analog clock's gap rule added time to. With the toggle on, that report and
+  the next ButtonSettleReports reports (counted in reports: the firmware's ramp is a
   number of pen reads, and the gap time would use up a ms window early) are **rebased** when the pen is down (pressed, or released
   without a lift) and nothing is pending (phantom / dropout): every reference (hold reference or trough, press peak / low) moves by
   the step, `FallExcess` stays, time passes (HeldTime; a release held by PressHoldoff fires when due), no fall / rise decision.
-  Pressure ≤ LiftThreshold is judged normally (lift at once); fresh contacts too. The released trough is clamped at ≥ 0 (see the
-  evidence). The phantom check is skipped. The filter builds `FirmwareSampleClock(analogPen)`: 1.000 ms per step plus the gap rule
+  Pressure ≤ LiftThreshold is judged normally (lift at once); fresh contacts too, and a Contact ends the window (2.14.1: a re-tune
+  while hovering must not freeze the landing). The released trough is clamped at ≥ 0 (see the evidence). The phantom check is skipped. The filter builds `FirmwareSampleClock(analogPen)`: 1.000 ms per step plus the gap rule
   (a running balance of host − counter time, floored at −1.5 ms; once it exceeds +1.5 ms it is added to that report and reset, so a
   steady 1 kHz never fires it and bursts add time at most once); the ×1.25 ratio check stays on the counter's own time, so a Pro
   Pen 3 with the toggle on (ratio 0.5) still falls back. Off: identical to 2.13.0 on every recording (diffed with defaults, the
@@ -236,6 +237,33 @@ fires on the report where the holdoff ends, repeat or not.
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-20 first CP923 gameplay, Windows (2.14.1, cp923 preset).** Owner: "adjust the windows cp923 preset settings and the dll if
+needed … fix the settings up a bit, i decided to go the 1k activation point route". The owner keeps two OTD presets on Windows
+(`Presets/cp923.json`, `propen3.json`: owner's values with Activation Distance 1000, Analog Pen on / off). Session: debugger log
+`tablet-data_1792518028.txt` → `recordings/play-cp923-20261020.csv` (290 s, 140 touches: 70 under 100 ms, 58 drags of 250–1000 ms)
+and live diagnostics `rt-20261020-204040` / `-204438` (Windows only), which `rt replay` reproduces exactly (218 / 52 events).
+`scratch/norearm_cuts.py`, `repress_modes.py`, `pertap.py`, `margin.py`, `bounce_dips.py`.
+- Live timing: host intervals p1 / p50 / p99 0.91 / 1.00 / 1.10 ms; the clock never fell back; the gap rule fired 230 times in 238 s,
+  224 while hovering (range entries), 6 while touching: 4 at button re-tunes, 1 on the bit-change report of a button 2 press, 1 on a
+  range-entry contact. So a touching gap is a re-tune.
+- 2.14.0 cut-outs with the cp923 preset (release while the pen keeps pressing; with Activation 1000 the click stays up): 4.
+  (1) **button 1 press 88 ms into a hold** (134.65 s): 4 ms gap on the first falling report (7221 → 7138, released), 4 ms gap again,
+  −90 ×4, 3 flat, then +682 with the bits: the pre-fall, led by the gap → 2.14.1 starts the settle window on gaps; the only event
+  that changes on the session (released 258 ms later, at the touch's real end). (2), (3) **landing releases on a one-report dip at
+  ~800 raw** (803 → 711 → 742, 789 → 663 → 740; 20 / 53 ms into the press, Tap Allowance ramp ~3 raw/ms): every one-report dip that
+  comes back in the three CP923 logs (28) starts at 767–805 raw on a rising press, 51–231 deep: a firmware artefact. Glitch Jump 70 +
+  Dropout Time 1 catches 1 of 2 (and holds every per-report fall ≥ 70 one report); left to the firmware. (4) **hold wobble** at 62.6
+  s, 179 ms into a hold at ~4600: ~20 raw/ms dips against 11.8 raw/ms of ramped allowance, fall excess 39.4 vs FRD 35 (margin 0.89).
+- Margin on (4) / cost on taps (mean shift of the first release of 79 touches < 250 ms): Tap Allowance 0.3 1.01 / +0.72 ms; 0.4 1.18 /
+  +1.33 (max 7); 0.5 1.40; Hold Time 350 1.00 / +0.20; **Hold Time 300 1.20 / +0.34** (25 later, max 3); Tap 0.3 + Hold 320 1.26.
+  Hold Time also moves the ×4 Hold Allowance step: with 300, the end of the button-1 touch (146.4 s: 8000 hold, button released at
+  220 ms, slow decline, lift at 447 ms) releases at 437 instead of 346 ms, one other drag end 10 ms later; drag-end lead mean
+  15.6 → 13.2 ms. Tap Allowance 0.4 is the alternative without that cost (+1.33 ms on taps). Linux drawing logs (button tests, harsh): cut-outs 128 → 118.
+  Rejected: Press Holdoff 8 (+1 landing cut, drawing 118 → 127), FRD 30 with Hold 300 (margin back to 1.03), FRD 45 / 60 (taps +0.8
+  / +1.6 ms).
+- cp923 preset now: owner's values + Activation 1000, Analog Pen, **Hold Time 300**. Release p50 8 ms after the descent starts (as on
+  the Pro Pen 3 live); lead before lift is shorter (p50 17–20 ms vs 31) because the CP923 tip drops from ~150 to 0 in one report.
 
 **2026-10-20 analog pen CP923 (2.14.0).** Owner: "build a toggle based of ptk670-analog-pen.md" (the firmware session's plan, untracked
 in the repo root: 1 ms clock, gap rule, rebase on the report with the new button bits, phantom check off, no added latency).
@@ -249,8 +277,9 @@ Measured on its logs (firmware repo `tablet-data_1792513436.txt` on 9f4a1b39 and
 - Report gaps (host time averaged over all changes; the Linux debugger's per-report Deltas are bursty, the device clock is blind
   too): button 1 press 8–9 reports *before* the bit change, button 2 press on it, button 1 release on −1 and 0, button 2 release on
   0 and +1; ~3 ms each. So the plan's fallback ("gap rule only within one report of a button change") would miss button 1 presses.
-  The gap rule is not used as a rebase trigger: on these Linux logs the bursty debugger time fires it ~20 times a second, mostly away
-  from button changes (live plugin timing is a clean 1 kHz on Windows, unknown here).
+  2.14.0 did not use the gap as a rebase trigger: on these Linux logs the bursty debugger time fires it ~20 times a second, mostly
+  away from button changes. Live Windows timing (next entry) made it usable in 2.14.1; the Linux recordings are now converted with
+  `td2csv.py --analog --no-gap`.
 - Releases within 10 reports of a touching button change, "normal" settings (owner's values with Activation 10, Hold Allowance 1,
   Release Distance 600; these re-press ~230 times per log on this drawing anyway): toggle off 84 of 170 (log a) / 90 of 288 (b);
   rebase on the change report only 76 / 64; 5 reports 50 / 54; **10 reports 17 / 34**, all of them before the change (offsets

@@ -21,6 +21,9 @@ from anywhere; paths are arguments. The current state, file locations and proced
 | `phantoms.py TD_FULL.csv` | Lone 8191 readings with hover distance, time since the previous lift and the next touch. |
 | `button_steps.py TABLET_DATA.txt` | Analog pen (CP923): per side-button change type, the pressure step per report around the change and where the report gaps sit. |
 | `button_releases.py CSV ARGSFILE [--set ...]` | Replays a CSV with a `buttons` column and counts releases around side-button changes while the pen is down (`DETAIL=1` lists them). Chose Button Settle Reports. |
+| `bounce_dips.py CSV... [--min 50]` | One-report pressure drops that come straight back, by starting level (the CP923's ~800-raw firmware dip). |
+| `pertap.py CSV BASEARGS "label\|--set ..." ...` | Per touch, how much later each variant releases than the base settings (taps / drags); prices a setting change. |
+| `margin.py CSV BASEARGS T0_S LEN_MS "label\|--set ..." ...` | Fall excess one touch builds (bisection on Fast Release Distance) and the margin at 35: how close a drag dip is to cutting. |
 | `otd_settings.py SETTINGS.json [Name=Value ...] [--show]` | Sets Rapid Trigger values in the PTK-670 profile as a text edit (keeps CRLF, inserts new properties). Back the file up first. |
 | `otd_winlog.py LOG.json` | OTD daemon log (Windows `Logs/*.log.json`): plugin loads, applied filter settings, warnings. |
 | `plot_strokes.py CSV EVENTS.txt OUT_PREFIX [--min-ms 300]` | PNG grids of strokes with the plugin's pressed state from `rt replay --events`. |

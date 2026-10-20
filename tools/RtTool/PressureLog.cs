@@ -12,13 +12,14 @@ namespace RtTool
     /// </summary>
     public sealed class PressureLog
     {
-        public PressureLog(string name, double[] time, uint[] pressure, double[]? hostTime = null, int[]? buttons = null)
+        public PressureLog(string name, double[] time, uint[] pressure, double[]? hostTime = null, int[]? buttons = null, bool[]? gaps = null)
         {
             Name = name;
             Time = time;
             Pressure = pressure;
             HostTime = hostTime ?? time;
             Buttons = buttons;
+            Gaps = gaps;
         }
 
         public string Name { get; }
@@ -40,6 +41,12 @@ namespace RtTool
         /// </summary>
         public int[]? Buttons { get; }
 
+        /// <summary>
+        /// Reports where the analog Firmware Sample Clock added a report gap the counter did not see (`gap` column = 1); null when the
+        /// log has none. Replays with Analog Pen start a settle window there, like the plugin.
+        /// </summary>
+        public bool[]? Gaps { get; }
+
         public int Count => Pressure.Length;
 
         public double Duration => Count == 0 ? 0 : Time[^1] - Time[0];
@@ -52,6 +59,7 @@ namespace RtTool
             var hosts = new List<double>();
             var values = new List<uint>();
             var buttons = new List<int>();
+            var gaps = new List<bool>();
             var culture = CultureInfo.InvariantCulture;
 
             if (header.StartsWith("t_ms", StringComparison.OrdinalIgnoreCase))
@@ -63,6 +71,7 @@ namespace RtTool
                 if (timeColumn < 0)
                     timeColumn = 0;
                 int buttonsColumn = Array.FindIndex(columns, c => c.Trim().Equals("buttons", StringComparison.OrdinalIgnoreCase));
+                int gapColumn = Array.FindIndex(columns, c => c.Trim().Equals("gap", StringComparison.OrdinalIgnoreCase));
                 foreach (var line in lines.Skip(1))
                 {
                     var parts = line.Split(',');
@@ -76,6 +85,8 @@ namespace RtTool
                         values.Add(p);
                         if (buttonsColumn >= 0)
                             buttons.Add(parts.Length > buttonsColumn && int.TryParse(parts[buttonsColumn], NumberStyles.Integer, culture, out var b) ? b : -1);
+                        if (gapColumn >= 0)
+                            gaps.Add(parts.Length > gapColumn && parts[gapColumn].Trim() == "1");
                     }
                 }
             }
@@ -113,7 +124,7 @@ namespace RtTool
             double t0 = times[0];
             double[]? hostTime = hosts.Count == values.Count ? hosts.Select(h => h - hosts[0]).ToArray() : null;
             return new PressureLog(Path.GetFileName(path), times.Select(t => t - t0).ToArray(), values.ToArray(), hostTime,
-                buttons.Count == values.Count ? buttons.ToArray() : null);
+                buttons.Count == values.Count ? buttons.ToArray() : null, gaps.Count == values.Count ? gaps.ToArray() : null);
         }
     }
 }

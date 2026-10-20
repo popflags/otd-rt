@@ -50,8 +50,10 @@ namespace RtTool
             {
                 double t = log.Time[i];
                 double host = log.HostTime[i];
-                bool buttonsChanged = log.Buttons != null && i > 0 && log.Buttons[i] >= 0 && log.Buttons[i - 1] >= 0 && log.Buttons[i] != log.Buttons[i - 1];
-                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs), host - previousHost, buttonsChanged);
+                // As the plugin: a side-button change, or a report gap the analog Firmware Sample Clock added.
+                bool retuned = log.Buttons != null && i > 0 && log.Buttons[i] >= 0 && log.Buttons[i - 1] >= 0 && log.Buttons[i] != log.Buttons[i - 1]
+                    || log.Gaps != null && log.Gaps[i];
+                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs), host - previousHost, retuned);
                 previous = t;
                 previousHost = host;
                 if (engine.DetectedEvent == TriggerEvent.Contact && ev != TriggerEvent.Contact && double.IsNaN(heldSince))
