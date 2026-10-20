@@ -226,10 +226,10 @@ mean progressing after the activation point"; on the gate: "just leave this feat
   100 (click p50 20 ms) are two-stage lifts / landing wobbles. No trough ≤ 50. 2026-10-14/15 logs (mostly unlabelled drawing, host
   timed): 506 lost of 1068 touchdowns, 438 ≥ 100; 5 / 9 ms logs: 19 of 566, 11 ≥ 100. All 21 unique logs: 665 lost, 537 ≥ 100.
 - Live gate (Windows, 400 ms; the second log also Hold Time 0, set and reverted by the owner): the gate held 35 / 57 touchdown
-  clicks (p50 183 / 167 ms), 22 / 44 went out after the touch ended, 5 / 14 touches merged, the timer sent 5 / 2 output changes, clicks
+  clicks (p50 183 / 167 ms), 22 / 44 went out after the touch ended, 5 / 9 touches merged, the timer sent 5 / 2 output changes, clicks
   never closer than 398.6 ms (the reference is the planned time, so a click that went out late lets the next come that much sooner).
   `rt replay` with the same settings reproduces the live output (390 / 390; 784 / 786, two releases one report apart from CSV time
-  rounding). Five Windows diagnostics logs are copies of files in `recordings/` (rt-20261001-162332 = play-ptk670-20261001,
+  rounding). Four Windows diagnostics logs are copies of files in `recordings/` (rt-20261001-162332 = play-ptk670-20261001,
   rt-20261001-212822 = newtip, rt-20261005-231546 = 5ms, rt-20261005-235359 = 5ms-dropouts).
 
 **2026-10-20 action patterns and the Touchdown Gate (2.12.0), same 23 min diagnostics (`rt-20261020-002836.csv`).** Owner: "a new
