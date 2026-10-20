@@ -8,7 +8,7 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 
 | What | State |
 |---|---|
-| Plugin installed | **2.12.0** (`6d0149b`) on Linux and Windows (same DLL, sha256 `4f26c23463f951be…`), Touchdown Gate **0** on both (the owner tried 300–520 on Windows on 2026-10-20 and went back to 0: "i probably wont use it"). Backups: Linux `~/.config/OpenTabletDriver/RapidTrigger-2.11.1.dll.bak` + `settings.json.before-2.12.0`, Windows `Backup/` (same names). |
+| Plugin installed | **2.13.0** (`07ed5f2`) on Linux and Windows (same DLL, sha256 `71f3106dbdb1d0ad…`). Backups `RapidTrigger-2.12.0.dll.bak` + `settings.json.before-2.13.0` (Linux `~/.config/OpenTabletDriver/`, Windows `Backup/`). |
 | Git | Branch `fw-0fc2521a`. GitHub `main` = `cb2474b` (release v2.10.0 published). Local, **not pushed**: `ee201ee` 2.11.0, `6e0f388` 2.11.1, `fc1b87a` handoff, `6d0149b` 2.12.0. `git push origin fw-0fc2521a:main` publishes v2.12.0 only (release.yml tags the current `<Version>`; 2.11.0/2.11.1 notes would not get their own releases). |
 | Owner's staged files | `recordings/rt-20261014-213607_drag.csv` and `…213849_tap.csv` are staged by the owner and must stay out of commits: always commit with an explicit path list (`git commit -- path…`), never a bare `git commit` / `--amend`. |
 | Tablet firmware | Candidate ring500 **a12b3929** (83a52e3c + R5G late-reply fix; hard-press glitches gone), accepted by the owner. 1000 Hz, motion sync ON: a pressure sample every 2.000 ms, repeated on the next report. Lone 8191 "phantom" readings after lifts remain (4–10 % of lifts). |
@@ -19,9 +19,11 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 
 ### Owner's Rapid Trigger settings (both systems)
 
-Contact Threshold 4 · Phantom Contact Pressure 8191 · Phantom Confirm Time 20 · Dropout Time 4 · Dropout Pressure 8190 · Glitch Jump
-2500 · Lift Threshold 2 · Activation Distance 10 · Activation Percent 0 · Fast Fall Speed 12 · Fast Fall Percent 0.2 · Fast Release
-Distance 35 · Tap Allowance 0.2 · Re-press Allowance 0.3 · Press Holdoff 12 · Minimum Click 0 · Touchdown Gate 0 · Release Distance 600 · Release Ratio 0
+**No-re-press mode since 2026-10-20** (the owner's choice): Activation Distance **10999** on Windows / **100000** on Linux (same
+effect: no re-press until the pen lifts), **Hold Allowance 4**, **Release Distance 1000**, **Rebound Distance 10**, Glitch Jump 0,
+Dropout Time 0. Rest: Contact Threshold 4 · Phantom Contact Pressure 8191 · Phantom Confirm Time 20 · Dropout Pressure 8190 · Lift
+Threshold 2 · Activation Percent 0 · Fast Fall Speed 12 · Fast Fall Percent 0.2 · Fast Release
+Distance 35 · Tap Allowance 0.2 · Re-press Allowance 0.3 · Press Holdoff 12 · Minimum Click 0 · Touchdown Gate 0 · Release Ratio 0
 · Max Release Distance 1000 · Drift Time Constant 10 · Press Drift Time Constant 0 · Hold Time 400 · Hold Release Multiplier 1 ·
 Firmware Sample Clock on · Preserve Pressure off.
 
@@ -74,6 +76,7 @@ properties. Restart the Linux daemon.
 | 2.10.0 | Glitch Jump (one-sample jumps ≥ 2500 held up to Dropout Time, ignored if they come back) | firmware 83a52e3c glitches cut drags and once left a hold released 210 ms; Release Distance 300 → 600 (slow path cut drags); Activation 10 + 0 % for 5.3 ms re-press |
 | 2.11.0 | Minimum Click (optional, owner uses 0) | wrong hypothesis that short clicks were missed by the game (it reads 3000 ticks/s) |
 | 2.11.1 | No dropout / glitch hold while a phantom contact is pending | a real tap 2 ms after a phantom pressed one sample late (live diagnostics) |
+| 2.13.0 | Hold Allowance, Rebound Distance (both off by default) | the owner's no-re-press mode (Activation Distance huge) cut drags: drag-end dips that hold level and landing dips release for good; 69 of 72 drag-end cut-outs gone at Hold Allowance 4 + Release Distance 1000 (drag ends release ~20 ms later) |
 | 2.12.0 | Touchdown Gate (experimental): a touchdown clicks no sooner than N ms (500) after the previous touchdown's click | owner: "wont allow fast taps to go actuate below 500ms"; blanket over taps and drags (a tap-only gate is not possible from pressure, and the owner ruled out x/y) |
 
 Verified on the 2026-10-20 live diagnostics (23 min):
@@ -102,6 +105,12 @@ Verified on the 2026-10-20 live diagnostics (23 min):
   once; it was restored from git.
 
 ## Open items
+
+- **No-re-press mode, what is left** (`scratch/norearm_cuts.py`, `scratch/repress_modes.py`): on ~47 min of gameplay 3 drag-end and
+  30 landing cut-outs remain (most landing ones are taps with a two-stage shape; 8 are drags that start light, nearly lift and then
+  press hard, lost entirely with Activation 10999). Activation Distance 1000 instead recovers them (49 re-presses on big pushes, 1
+  wobble click; button up while pressing 1.5 s total vs 6.6 s with 10999). Offered to the owner, not set. Next live session with
+  diagnostics on would show which cut-outs the owner actually feels.
 
 - **"No re-press until the pen lifts" (asked 2026-10-20, not implemented):** `scratch/no_rearm.py` with `scratch/owner-settings.args`.
   On the current-firmware gameplay logs (game, game2, a, b, the three 2026-10-20 diagnostics; ~47 min, 2019 touchdowns) it loses 140
