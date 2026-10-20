@@ -14,7 +14,8 @@ from anywhere; paths are arguments. The current state, file locations and proced
 | `no_rearm.py CSV... --set ... [--list]` | What a "no re-press until the pen lifts" mode would lose: every re-press without lifting, how far pressure went past the activation point, where in the touch, click length. |
 | `norearm_cuts.py CSV... --set ... [--list]` | Drag cut-outs when re-presses are off (huge Activation Distance): releases after which the pen keeps pressing (pressure comes back or holds level before the lift), by place in the touch (landing / mid / drag end), plus tap and drag-end release lead. |
 | `repress_modes.py CSV... --set ...` | One line per setting set: re-presses (real vs wobble clicks), real re-press delay, drag cut-outs and how long the button stays up while the pen presses. Compares Activation Distance 10 … 10999 and the fixes. |
-| `owner-settings.args` | The owner's current Rapid Trigger values as `--set` arguments (from the Windows settings.json): `rt replay LOG $(cat scratch/owner-settings.args)`. Refresh it when the owner changes settings. |
+| `owner-settings.args` | The owner's Pro Pen 3 Rapid Trigger values (Windows `Presets/propen3.json`, PTK-670) as `--set` arguments: `rt replay LOG $(cat scratch/owner-settings.args)`. Regenerate from the preset when the owner changes settings. |
+| `owner-settings-cp923.args` | The same for the CP923 (Windows `Presets/cp923.json`: Analog Pen on, Hold Time 300). |
 | `touch_check.py CSV [--dotnet D] [--rt rt.dll] [--set Name=V ...]` | Replays a log with `rt` and checks that every touch with pressure is pressed, and how soon. |
 | `dips.py CSV [--fall 250] [--rebound 100]` | In-stroke dips with their fastest 10 ms fall: how `tools/Tune`'s re-click / drag-dip labels were found. |
 | `glitches.py CSV [--min 2500]` | One- or two-sample firmware pressure glitches and the largest genuine per-sample change. Its largest-rise figure also counts what is left of 3-sample glitches. |

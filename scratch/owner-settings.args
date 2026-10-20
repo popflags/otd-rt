@@ -1,9 +1,9 @@
 --set ContactThreshold=4
 --set PhantomContactPressure=8191
 --set PhantomConfirmTime=20
+--set DropoutTime=0
 --set DropoutPressure=8190
---set ReboundDistance=10
---set HoldAllowance=4
+--set GlitchJump=0
 --set LiftThreshold=2
 --set ActivationPercent=0
 --set FastFallSpeed=12
@@ -11,6 +11,8 @@
 --set FastReleaseDistance=35
 --set TapAllowance=0.2
 --set RepressAllowance=0.3
+--set HoldAllowance=4
+--set ReboundDistance=10
 --set PressHoldoff=12
 --set MinimumClick=0
 --set TouchdownGate=0
@@ -21,6 +23,6 @@
 --set PressDriftTimeConstant=0
 --set HoldTime=400
 --set HoldReleaseMultiplier=1
---set GlitchJump=0
---set DropoutTime=0
---set ActivationDistance=10999
+--set ButtonSettleReports=10
+--set ActivationDistance=1000
+--set AnalogPen=false

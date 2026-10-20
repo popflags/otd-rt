@@ -1,4 +1,4 @@
-# Handoff: state, locations, procedures (updated 2026-10-20, 2.14.0)
+# Handoff: state, locations, procedures (updated 2026-10-20 night, 2.14.1)
 
 Read this first after a context reset, then `CLAUDE.md` (design history and evidence) and the firmware session's notes
 `ptk670-firmware-updates.md` / `ptk670-logs.md` / `ptk670-analog-pen.md` in the repo root (untracked, written by the firmware session). Analysis scripts are in
@@ -8,9 +8,9 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 
 | What | State |
 |---|---|
-| Plugin installed | **2.14.0** (`247f8f2`) on Linux and Windows (same DLL, sha256 `d91de4c1ef23397e…`), copied 2026-10-20 evening; Windows loads it at the next OTD start. Backups `RapidTrigger-2.13.0.dll.bak` (Linux `~/.config/OpenTabletDriver/`, Windows `Backup/`). Settings files not touched (Analog Pen absent = off). |
-| Rapid Trigger enabled? | **Windows: on** (PTK profile, owner's values below). **Linux: off** in the PTK profile since 15:28 on 2026-10-20 (the owner's change, around the CP923 tests; the CTC-6110WL profile has it off too). Do not re-enable without asking. |
-| Git | Branch `fw-0fc2521a`. GitHub `main` = `cb2474b` (release v2.10.0 published). Local, **not pushed**: everything from 2.11.0 to `247f8f2` 2.14.0 plus handoff commits. `git push origin fw-0fc2521a:main` publishes v2.14.0 only (release.yml tags the current `<Version>`; 2.11–2.13 notes would not get their own releases). |
+| Plugin installed | **2.14.1** (`b23ec6a`) on Linux and Windows (same DLL, sha256 `6529f47ad80a8fd6…`), 2026-10-20 ~21:30; Windows loads it at the next OTD start, Linux daemon restarted (loaded, settings applied). Backups `RapidTrigger-2.14.0.dll.bak` and `-2.13.0.dll.bak` (Linux `~/.config/OpenTabletDriver/`, Windows `Backup/`). |
+| Rapid Trigger enabled? | **Windows: on**, PTK profile = the cp923 preset (see below). **Linux: on again** (the owner re-enabled it after 15:28): PTK profile Activation 1000, Analog Pen on, Hold Time 400 (not changed by me; the owner asked for the Windows preset only). CTC-6110WL profiles: the owner experiments there; leave them. |
+| Git | Branch `fw-0fc2521a`. GitHub `main` = `cb2474b` (release v2.10.0 published). Local, **not pushed**: everything from 2.11.0 to `b23ec6a` 2.14.1 plus handoff commits. `git push origin fw-0fc2521a:main` publishes v2.14.1 only (release.yml tags the current `<Version>`; 2.11–2.14.0 notes would not get their own releases). Untracked in the repo root, not ours: `propen3.json` (a Linux preset export from the owner) and the firmware session's `ptk670-*.md`. |
 | Owner's staged files | `recordings/rt-20261014-213607_drag.csv` and `…213849_tap.csv` are staged by the owner and must stay out of commits: always commit with an explicit path list (`git commit -- path…`), never a bare `git commit` / `--amend`. |
 | Tablet firmware | Production ring500 **9f4a1b39** (2026-10-20; a12b3929 + analog-pen work only). Pro Pen 3: 1000 Hz, motion sync ON, a pressure sample every 2.000 ms, repeated on the next report; lone 8191 "phantom" readings after lifts remain (4–10 % of lifts). The owner also has the analog **CP923** pen: a sample every report (1 ms), side-button changes step the pressure; tick **Analog Pen** for it (2.14.0). |
 | Game | S4 League on a private server that reads input at 3000 ticks/s (click length vs frame rate is not an issue). |
@@ -18,11 +18,16 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 | Other enabled PTK filters | Hover Distance Limiter (PostTransform, 0–255, Near Proximity cutoff on), Scroll Binding (pass-through), Saturn HRRNC (position only). Decompiled 2026-10-20: none drops reports or changes pressure; VMulti writes every button change at once. |
 | Diagnostics | Off on both (the owner turned Windows off after the 2026-10-20 session). Windows writes to `C:\Users\Administrator\rapid-trigger-logs\` (~60 MB per 20 min). Since 2.12.0 the CSV has a `detected` column; `pressed` / `event` are the output after the Touchdown Gate. Since 2.14.0 also `buttons` (side buttons) and `gap` (analog clock added a report gap). |
 
-### Owner's Rapid Trigger settings (both systems)
+### Owner's Rapid Trigger settings
 
-**No-re-press mode since 2026-10-20** (the owner's choice): Activation Distance **10999** on Windows / **100000** on Linux (same
-effect: no re-press until the pen lifts), **Hold Allowance 4**, **Release Distance 1000**, **Rebound Distance 10**, Glitch Jump 0,
-Dropout Time 0. Rest: Contact Threshold 4 · Phantom Contact Pressure 8191 · Phantom Confirm Time 20 · Dropout Pressure 8190 · Lift
+**Windows presets** (`…/OpenTabletDriver/Presets/`, full settings snapshots the owner switches between in the OTD UI; the live
+`settings.json` currently equals cp923): **cp923.json** and **propen3.json**, both with **Activation Distance 1000** (the owner's
+"1k activation point route", 2026-10-20 night; re-presses only on a 1000 push), differing in **Analog Pen** (on / off) and **Hold
+Time** (cp923 **300** since 2.14.1, propen3 400). `scratch/owner-settings-cp923.args` / `owner-settings.args` hold them as `--set`
+lines (generated from the preset files). Backups `Backup/cp923.json.before-2.14.1`, `settings.json.before-2.14.1`.
+
+Before that: no-re-press mode (Activation 10999 / Linux 100000). Common values: **Hold Allowance 4**, **Release Distance 1000**,
+**Rebound Distance 10**, Glitch Jump 0, Dropout Time 0, Button Settle Reports 10, Firmware Sample Clock on. Rest: Contact Threshold 4 · Phantom Contact Pressure 8191 · Phantom Confirm Time 20 · Dropout Pressure 8190 · Lift
 Threshold 2 · Activation Percent 0 · Fast Fall Speed 12 · Fast Fall Percent 0.2 · Fast Release
 Distance 35 · Tap Allowance 0.2 · Re-press Allowance 0.3 · Press Holdoff 12 · Minimum Click 0 · Touchdown Gate 0 · Release Ratio 0
 · Max Release Distance 1000 · Drift Time Constant 10 · Press Drift Time Constant 0 · Hold Time 400 · Hold Release Multiplier 1 ·
@@ -79,6 +84,7 @@ properties. Restart the Linux daemon.
 | 2.11.1 | No dropout / glitch hold while a phantom contact is pending | a real tap 2 ms after a phantom pressed one sample late (live diagnostics) |
 | 2.13.0 | Hold Allowance, Rebound Distance (both off by default) | the owner's no-re-press mode (Activation Distance huge) cut drags: drag-end dips that hold level and landing dips release for good; 69 of 72 drag-end cut-outs gone at Hold Allowance 4 + Release Distance 1000 (drag ends release ~20 ms later) |
 | 2.12.0 | Touchdown Gate (experimental): a touchdown clicks no sooner than N ms (500) after the previous touchdown's click | owner: "wont allow fast taps to go actuate below 500ms"; blanket over taps and drags (a tap-only gate is not possible from pressure, and the owner ruled out x/y) |
+| 2.14.1 | Analog Pen: a report gap the clock sees also starts the settle window; a contact ends it; cp923 preset Hold Time 300 | first CP923 gameplay: a button 1 pre-fall after a gap cut a hold (Activation 1000 kept it up); a hold wobble at 179 ms (margin 0.89 → 1.20) |
 | 2.14.0 | Analog Pen toggle (CP923): 1 ms sample clock + report-gap rule, side-button pressure steps rebased for Button Settle Reports (10), phantom check off; Mismatch resets on a pen change; diagnostics `buttons` / `gap` columns, `td2csv.py --analog` | owner: "build a toggle based of ptk670-analog-pen.md"; the plan's one-report rebase left ~80 % of the button-change releases (the firmware ramps for ~10 reports) |
 
 Verified on the 2026-10-20 live diagnostics (23 min):
@@ -108,15 +114,16 @@ Verified on the 2026-10-20 live diagnostics (23 min):
 
 ## Open items
 
-- **CP923 / Analog Pen (2.14.0), what is left** (CLAUDE.md evidence, `scratch/button_steps.py`, `scratch/button_releases.py`):
-  - Some button 1 presses (10 of 51 on 1792513436) pull the pressure down ~110 per report for 3–6 reports **before** the button bits
-    change; that can release a hold. Not fixable in the plugin without delaying releases. For the firmware session: the report gap
-    comes 8–9 reports before the bit change, so the firmware knows it is re-tuning; holding the pressure (or setting the bits) from
-    the gap on, and removing the ~10-report ramp/overshoot after the change, would make the toggle's settle window unnecessary.
-  - No CP923 gameplay recording yet (the two logs are drawing + button tests). Next: a session with Enable Diagnostics on (the CSV
-    now has `buttons` / `gap`), then `rt replay --set AnalogPen=true` and `tools/Tune`-style scoring at 1 ms.
-  - Live gap rule unverified: the Linux debugger's Deltas are bursty, so the `gap` column of the converted logs over-counts. A
-    Windows diagnostics session shows what the plugin's clock really sees.
+- **CP923 / Analog Pen, what is left** (CLAUDE.md evidence 2026-10-20, `recordings/play-cp923-20261020.csv`):
+  - **For the firmware session:** (1) a one-report dip of 50–230 raw when a press rises through ~800 raw (all 28 such bounces in three
+    CP923 logs start at 767–805; `scratch/bounce_dips.py`); it released 2 landings in the first gameplay session and no setting
+    absorbs it cheaply. (2) Side-button re-tunes: a 3–5 ms report gap, then (button 1 press) ~110 per report of pre-fall for 3–6
+    reports, then the bits and a ~10-report ramp/overshoot. 2.14.1 covers this from the gap on (live Windows timing is clean), but
+    holding the pressure through the re-tune in firmware would make the settle window unnecessary.
+  - The gap trigger relies on live timing like Windows (6 touching gaps in 238 s, all re-tunes). Linux live timing with the CP923 is
+    unmeasured (only debugger logs, which are bursty); a Linux diagnostics session would show whether gaps fire away from re-tunes.
+  - The mismatch warnings at 20:55:39 / 20:58:22 (Windows log) came after the cp923 settings were applied with another pen in
+    use (probably the Pro Pen 3 with Analog Pen on): expected fallback; the propen3 preset is the right one for that pen.
   - Optional later: Off / On / Auto from the tool bytes (CP923 `00 00 00 00 02`, Pro Pen 3 `3E C9 58 26 00`).
 
 - **No-re-press mode, what is left** (`scratch/norearm_cuts.py`, `scratch/repress_modes.py`): on ~47 min of gameplay 3 drag-end and
@@ -143,7 +150,7 @@ Verified on the 2026-10-20 live diagnostics (23 min):
   Options if the owner wants them: a lower gate (480: 204 held, p50 81 ms; 450: 160, p50 53), or counting from the previous
   *touch* instead of the previous click (no falling behind, but clicks can then be < 500 apart).
 
-- Push `fw-0fc2521a` to `main` when the owner says so (v2.14.0 release).
+- Push `fw-0fc2521a` to `main` when the owner says so (v2.14.1 release).
 - Phantom guard: a real landing at exactly 8191 presses on the first sample below it (4 ms, ~1 in 900 taps). Pressing on a lone 8191
   would turn real phantoms (pen 15–20 above the surface) into clicks. Hover distance would separate them, but the engine is
   pressure-only.
