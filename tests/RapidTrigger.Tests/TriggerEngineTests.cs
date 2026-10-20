@@ -568,6 +568,77 @@ namespace RapidTrigger.Tests
             Assert.Equal(TriggerEvent.Contact, engine.Update(2500, 1));
         }
 
+        // The owner's no-re-press mode (2026-10-20): Activation Distance 10999, Glitch Jump and Dropout Time off.
+        private static TriggerSettings NoRepress(double holdAllowance = 1, double releaseDistance = 600, double rebound = 0)
+        {
+            var s = Owner20261019Game();
+            s.ActivationDistance = 10999;
+            s.GlitchJump = 0;
+            s.DropoutTime = 0;
+            s.HoldAllowance = holdAllowance;
+            s.ReleaseDistance = releaseDistance;
+            s.ReboundDistance = rebound;
+            return s;
+        }
+
+        // A drag held ~450 ms at 7500, a drag-end dip of 1500 at 30 raw/ms that then holds level for 100 ms (pen still pressing),
+        // and the real lift at 300 raw/ms. 2 ms samples, 2 reports each.
+        private static double[] DragEndDipThenLift() => Signals.Samples(2, new[] { 3000.0 }
+            .Concat(Enumerable.Range(0, 225).Select(i => 7500.0 - i % 2 * 4))
+            .Concat(Enumerable.Range(1, 25).Select(i => 7500.0 - 60 * i))
+            .Concat(Enumerable.Range(0, 50).Select(i => 6000.0 - i % 2 * 4))
+            .Concat(Enumerable.Range(1, 10).Select(i => 6000.0 - 600 * i)).ToArray()).ToArray();
+
+        [Fact]
+        public void HoldAllowanceKeepsADragEndDipThatLevelsOffAndStillReleasesTheLift()
+        {
+            var signal = DragEndDipThenLift();
+            int dipStart = 2 * 226, liftStart = 2 * 301;
+
+            var before = Engine(NoRepress());
+            before.Update(0, 1);
+            var cut = Signals.Run(before, signal);
+            Assert.Equal(TriggerEvent.Contact, cut[0].Event);
+            Assert.InRange(cut[1].Index, dipStart, liftStart - 1);
+
+            var after = Engine(NoRepress(holdAllowance: 4, releaseDistance: 1000));
+            after.Update(0, 1);
+            var held = Signals.Run(after, signal);
+            Assert.Equal(2, held.Count);
+            Assert.True(held[1].Event is TriggerEvent.FastRelease or TriggerEvent.Release);
+            Assert.InRange(held[1].Index, liftStart, liftStart + 3);
+        }
+
+        [Fact]
+        public void HoldAllowanceDoesNotChangeTaps()
+        {
+            var timeline = Timeline(1200, (0, GateTap()), (300, GateTap()), (700, GateTap()));
+            Assert.Equal(RunGate(Owner20261019Game(), timeline, out _), RunGate(WithHoldAllowance(Owner20261019Game(), 4), timeline, out _));
+        }
+
+        private static TriggerSettings WithHoldAllowance(TriggerSettings s, double holdAllowance)
+        {
+            s.HoldAllowance = holdAllowance;
+            return s;
+        }
+
+        [Fact]
+        public void ReboundDistanceKeepsTheLandingBounceRuleWithAHugeActivationDistance()
+        {
+            // Same landing bounce as HeldBackReleaseIsDroppedWhenPressureHasReboundedByTheHoldoffEnd. With Activation Distance 10999
+            // the rebound needed to drop the held-back release is 10999 too, so it released for good at the holdoff end.
+            var samples = Signals.Samples(2, 3706, 3353, 3337, 3405, 3459, 3539, 3616, 3670, 3712, 3745, 3776, 3802, 3813, 3820).ToArray();
+
+            var off = Engine(NoRepress());
+            off.Update(0, 1);
+            Assert.Equal(TriggerEvent.FastRelease, Signals.Run(off, samples).Last().Event);
+
+            var on = Engine(NoRepress(rebound: 10));
+            on.Update(0, 1);
+            Assert.Equal((0, TriggerEvent.Contact), Signals.Run(on, samples).Single());
+            Assert.True(on.Pressed);
+        }
+
         [Fact]
         public void PressHoldoffDelaysOnlyReleasesInsideIt()
         {

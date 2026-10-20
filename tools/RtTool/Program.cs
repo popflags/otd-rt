@@ -58,7 +58,7 @@ static void PrintUsage()
 
         Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, DropoutPressure, GlitchJump, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
         ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, TapAllowance, RepressAllowance, PressHoldoff, MinimumClick, PressDriftTimeConstant,
-        HoldTime, HoldReleaseMultiplier, TouchdownGate (0 here unless set; the plugin's default is 500).
+        HoldTime, HoldReleaseMultiplier, HoldAllowance, ReboundDistance, TouchdownGate (0 here unless set; the plugin's default is 500).
 
         Other options:
             --lift-window ms   time after a release in which pressure must reach the lift

@@ -146,6 +146,23 @@ namespace RapidTrigger
         /// </summary>
         public double TouchdownGate { get; set; }
 
+        /// <summary>
+        /// Fast-fall detector: allowance multiplier once a press has lasted HoldTime (drags and holds); the Tap / Re-press Allowance
+        /// ramp before it is unchanged, so taps are not affected. For setups without re-presses (Activation Distance huge), where a
+        /// release cannot be undone until the pen lifts: drag ends on the 2 ms gameplay logs dip at ~20-30 raw/ms and then hold level,
+        /// while real lifts fall at 50-250 raw/ms. 4 removed 61 of 72 such drag-end cut-outs (the rest come from the slow path: raise
+        /// Release Distance to 1000); drag ends then release ~20 ms later. With re-presses on (normal Activation Distance) it would
+        /// swallow re-clicks inside drags (29.6-65 raw/ms falls). 1 = off.
+        /// </summary>
+        public double HoldAllowance { get; set; } = 1;
+
+        /// <summary>
+        /// Rise from the low after the peak that makes a release held back by Press Holdoff count as a landing bounce and be dropped,
+        /// in raw units. 0 = the re-press distance (Activation Distance + Activation Percent), as before. Set it (e.g. 10) when
+        /// Activation Distance is huge: that disables the bounce rule otherwise, and landing dips then release for good.
+        /// </summary>
+        public double ReboundDistance { get; set; }
+
         /// <summary>Slow path: fall below the hold reference that releases, whatever the speed.</summary>
         public double ReleaseDistance { get; set; } = 600;
 
@@ -569,6 +586,8 @@ namespace RapidTrigger
                 double start = _pressedFromContact ? s.TapAllowance : s.RepressAllowance;
                 if (start != 1 && s.HoldTime > 0 && HeldTime < s.HoldTime)
                     allowance *= start + (1 - start) * HeldTime / s.HoldTime;
+                else if (s.HoldAllowance != 1 && HeldTime >= s.HoldTime)
+                    allowance *= s.HoldAllowance;
                 FallExcess = Math.Max(0, FallExcess + (previous - p) - allowance * elapsedMs);
                 fastFallBuilding = FallExcess > 0;
             }
@@ -620,7 +639,8 @@ namespace RapidTrigger
         // right away. A tap whose own fall has started by then (5562 -> 5083 -> 5413 -> 5377 -> 5269) still releases.
         private bool Rebounded(double p)
             => !_lastSampleFell && p > _pressLow
-               && p - _pressLow >= _settings.ActivationDistance + _settings.ActivationPercent * 0.01 * _pressLow;
+               && p - _pressLow >= (_settings.ReboundDistance > 0 ? _settings.ReboundDistance
+                   : _settings.ActivationDistance + _settings.ActivationPercent * 0.01 * _pressLow);
 
         // How long after the press a release of this kind may fire: lifts wait for MinimumClick, other releases also for
         // PressHoldoff.

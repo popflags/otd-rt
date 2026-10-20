@@ -208,12 +208,36 @@ fires on the report where the holdoff ends, repeat or not.
   one-shot `System.Threading.Timer` (`OutputDueInMs`, +1 ms) and calls `Tick` under a lock shared with `Consume` (like OTD's
   `AsyncPositionedPipelineElement`), re-emitting the last report with its original position; the lock and timer exist only while
   the gate is on. Threadpool timers on Windows can be ~15 ms late; reports normally get there first.
+- `HoldAllowance` (2.13.0, default 1 = off): fast-detector allowance × this once HeldTime ≥ HoldTime (a step; the Tap / Re-press
+  Allowance ramp before it is unchanged, so taps are untouched). `ReboundDistance` (2.13.0, default 0 = the re-press distance): the
+  rise the 2.9.0 holdoff bounce rule needs; with a huge Activation Distance the rule otherwise never triggers. Both exist for the
+  owner's no-re-press mode (see the evidence below).
 - Defaults (2.7.0, unchanged in 2.8.0; GlitchJump 0 since 2.10.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
   PressHoldoff 8 ms, HoldTime 250 ms,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-20 no-re-press mode (2.13.0).** The owner played Activation Distance 10999 (Windows, with Glitch Jump 0 / Dropout Time 0;
+Linux 100000), no diagnostics: "i really enjoyed the absurd activation distance, but there were some drag cutouts with it any way to
+improve that kind of mode?". Rebuilt on the current-firmware gameplay logs (game, game2, a, b, rt-20261020-002836 / -014808 /
+-015015; 2037 touchdowns, ~47 min) with `scratch/norearm_cuts.py` / `scratch/repress_modes.py`. A cut-out = a release after which,
+before pressure falls under 25 % of the press's peak, it comes back up ≥ 100 or holds level (falls < 3 % of the peak in 40 ms);
+steady slow lifts are real releases.
+- As played: 117 cut-outs (72 drag ends: a 6–20 % dip at ~20–30 raw/ms, just above the ~27 raw/ms allowance at 7500, then level
+  for 50–250 ms, staged lifts; 38 landing: 2–5 % dips released at the 12 ms holdoff end, 8 of them drags that start light, nearly
+  lift, then press hard, so the whole drag is lost; 7 mid). Button up while the pen presses: 19.2 s (p50 170 ms). Normal mode
+  re-presses these within a few ms (4.0 s total), which is why the owner never felt cuts before.
+- Tried and dropped: a depth condition (release only after falling X % below where the fall began): drag ends 72 → 1–6 at 30–50 %
+  after 100 ms but they release ~25–30 ms later (lead 37 → 7–13 ms); from the press on even 5 % costs taps ~6 ms (lead 31 → 25),
+  because taps release on the first percent of their fall. Higher Tap Allowance / Press Holdoff alone: landing 38 → 24–28 for
+  1–4 ms on taps.
+- Kept: Hold Allowance (step at Hold Time): drag-end cut-outs 72 → 52 / 35 / 17 / 11 at 1.5 / 2 / 3 / 4, flat beyond (6, 8: 11, all
+  from the slow path) with Release Distance 1000: 3 left (lead 37 → 17 ms, the cost); taps unchanged (31 ms). Rebound Distance 10:
+  landing 38 → 30 for free. Activation 500–1000 instead of 10999 recovers the 8 lost drag starts: 49 re-presses (1 wobble click) with
+  1000, button up 1.5 s total (p50 40 ms), less than normal mode; 500: 59 (3), 1.0 s.
+- Defaults and the owner's normal settings replay identically to 2.12.0 (both new settings off).
 
 **2026-10-20 "no re-press until lift" question and the live Touchdown Gate sessions.** Owner: "check what would happen if i just went
 with flat out no reactivation possible unless it hit 0 pressure, how many inputs would i miss from all the logs combined? real taps

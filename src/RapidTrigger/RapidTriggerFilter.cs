@@ -195,6 +195,8 @@ namespace RapidTrigger
                 PressDriftTimeConstant = PressDriftTimeConstant,
                 HoldTime = HoldTime,
                 HoldReleaseMultiplier = HoldReleaseMultiplier,
+                HoldAllowance = HoldAllowance,
+                ReboundDistance = ReboundDistance,
                 TouchdownGate = TouchdownGate,
             };
 
@@ -304,6 +306,19 @@ namespace RapidTrigger
             "Same ramp after a re-press without lifting. Milder, because a re-press inside a held motion usually continues\n" +
             "as a hold. 1 = off.")]
         public double RepressAllowance { set; get; } = 0.5;
+
+        [Property("Hold Allowance"), DefaultPropertyValue(1.0), ToolTip(
+            "Fast release detector: the drag allowance is multiplied by this once a press has lasted Hold Time (drags and\n" +
+            "holds); taps are not affected. For setups without re-presses (Activation Distance huge), where a release cannot be\n" +
+            "undone until the pen lifts: drag ends that dip and then hold stop releasing, real lifts still do (~20 ms later).\n" +
+            "4 with Release Distance 1000 removed almost all such cut-outs. With re-presses on it swallows re-clicks in drags. 1 = off.")]
+        public double HoldAllowance { set; get; } = 1;
+
+        [Property("Rebound Distance"), DefaultPropertyValue(0.0), Unit("raw"), ToolTip(
+            "A release held back by Press Holdoff is dropped as a landing bounce once pressure is back up by this much and rising.\n" +
+            "0 = the re-press distance (Activation Distance + Percent). Set it (10) when Activation Distance is huge, otherwise\n" +
+            "the bounce rule never triggers and landing dips release for good.")]
+        public double ReboundDistance { set; get; }
 
         [Property("Press Holdoff"), DefaultPropertyValue(8.0), Unit("ms"), ToolTip(
             "For this long after a press only a lift releases. Absorbs landing bounces right after contact that would\n" +
