@@ -215,6 +215,23 @@ fires on the report where the holdoff ends, repeat or not.
 
 ### Evidence behind the design and defaults
 
+**2026-10-20 "no re-press until lift" question and the live Touchdown Gate sessions.** Owner: "check what would happen if i just went
+with flat out no reactivation possible unless it hit 0 pressure, how many inputs would i miss from all the logs combined? real taps
+mean progressing after the activation point"; on the gate: "just leave this feature in but i probably wont use it" (both systems at 0).
+- `scratch/no_rearm.py` (owner's settings in `scratch/owner-settings.args`): every Rearm is a lost click; contacts are identical with
+  re-presses disabled (ActivationDistance 1e9) on every log. Progression = highest pressure after the re-press − (trough + activation).
+  Current firmware, 2 ms gameplay (game, game2, a, b, rt-20261020-002836 / -014808 / -015015; 2019 touchdowns): 140 lost, 88 with
+  progression ≥ 100 (≥ 50: 107, ≥ 200: 78): 60 at drag ends (drag into tap, click p50 68 ms), 25 in the first 100 ms of a touch (11
+  of them holds of 150–630 ms after an early landing release, which would end as the ~20 ms first click), 3 mid-touch. The 52 under
+  100 (click p50 20 ms) are two-stage lifts / landing wobbles. No trough ≤ 50. 2026-10-14/15 logs (mostly unlabelled drawing, host
+  timed): 506 lost of 1068 touchdowns, 438 ≥ 100; 5 / 9 ms logs: 19 of 566, 11 ≥ 100. All 21 unique logs: 665 lost, 537 ≥ 100.
+- Live gate (Windows, 400 ms; the second log also Hold Time 0, set and reverted by the owner): the gate held 35 / 57 touchdown
+  clicks (p50 183 / 167 ms), 22 / 44 went out after the touch ended, 5 / 14 touches merged, the timer sent 5 / 2 output changes, clicks
+  never closer than 398.6 ms (the reference is the planned time, so a click that went out late lets the next come that much sooner).
+  `rt replay` with the same settings reproduces the live output (390 / 390; 784 / 786, two releases one report apart from CSV time
+  rounding). Five Windows diagnostics logs are copies of files in `recordings/` (rt-20261001-162332 = play-ptk670-20261001,
+  rt-20261001-212822 = newtip, rt-20261005-231546 = 5ms, rt-20261005-235359 = 5ms-dropouts).
+
 **2026-10-20 action patterns and the Touchdown Gate (2.12.0), same 23 min diagnostics (`rt-20261020-002836.csv`).** Owner: "a new
 editable number that wont allow fast taps to go actuate below 500ms by default … if a tap is pressed earlier, it actuates at 500ms";
 "check … tap tap drag, tap drag, drag tap tap, see if they're doing fine as they're likely all about the same 500ms"; asked for a

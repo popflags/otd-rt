@@ -8,7 +8,7 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 
 | What | State |
 |---|---|
-| Plugin installed | **2.12.0** (`6d0149b`) on Linux and Windows (same DLL, sha256 `4f26c23463f951be…`), Touchdown Gate 500 on both (owner's request, experimental). Backups: Linux `~/.config/OpenTabletDriver/RapidTrigger-2.11.1.dll.bak` + `settings.json.before-2.12.0`, Windows `Backup/` (same names). |
+| Plugin installed | **2.12.0** (`6d0149b`) on Linux and Windows (same DLL, sha256 `4f26c23463f951be…`), Touchdown Gate **0** on both (the owner tried 300–520 on Windows on 2026-10-20 and went back to 0: "i probably wont use it"). Backups: Linux `~/.config/OpenTabletDriver/RapidTrigger-2.11.1.dll.bak` + `settings.json.before-2.12.0`, Windows `Backup/` (same names). |
 | Git | Branch `fw-0fc2521a`. GitHub `main` = `cb2474b` (release v2.10.0 published). Local, **not pushed**: `ee201ee` 2.11.0, `6e0f388` 2.11.1, `fc1b87a` handoff, `6d0149b` 2.12.0. `git push origin fw-0fc2521a:main` publishes v2.12.0 only (release.yml tags the current `<Version>`; 2.11.0/2.11.1 notes would not get their own releases). |
 | Owner's staged files | `recordings/rt-20261014-213607_drag.csv` and `…213849_tap.csv` are staged by the owner and must stay out of commits: always commit with an explicit path list (`git commit -- path…`), never a bare `git commit` / `--amend`. |
 | Tablet firmware | Candidate ring500 **a12b3929** (83a52e3c + R5G late-reply fix; hard-press glitches gone), accepted by the owner. 1000 Hz, motion sync ON: a pressure sample every 2.000 ms, repeated on the next report. Lone 8191 "phantom" readings after lifts remain (4–10 % of lifts). |
@@ -21,7 +21,7 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 
 Contact Threshold 4 · Phantom Contact Pressure 8191 · Phantom Confirm Time 20 · Dropout Time 4 · Dropout Pressure 8190 · Glitch Jump
 2500 · Lift Threshold 2 · Activation Distance 10 · Activation Percent 0 · Fast Fall Speed 12 · Fast Fall Percent 0.2 · Fast Release
-Distance 35 · Tap Allowance 0.2 · Re-press Allowance 0.3 · Press Holdoff 12 · Minimum Click 0 · **Touchdown Gate 500** · Release Distance 600 · Release Ratio 0
+Distance 35 · Tap Allowance 0.2 · Re-press Allowance 0.3 · Press Holdoff 12 · Minimum Click 0 · Touchdown Gate 0 · Release Distance 600 · Release Ratio 0
 · Max Release Distance 1000 · Drift Time Constant 10 · Press Drift Time Constant 0 · Hold Time 400 · Hold Release Multiplier 1 ·
 Firmware Sample Clock on · Preserve Pressure off.
 
@@ -35,19 +35,15 @@ Firmware Sample Clock on · Preserve Pressure off.
 | Windows partition | `/dev/nvme0n1p4` (label SapphireOS) → `/run/media/popf/SapphireOS` via `udisksctl mount -b /dev/nvme0n1p4` (add `-o ro` to read only). |
 | Windows OTD | `…/SapphireOS/Users/Administrator/AppData/Local/OpenTabletDriver/`: `settings.json` (CRLF), plugin `Plugins/RapidTrigger (2)/RapidTrigger (2).dll` (folder renamed by the owner's plugin-manager install on 2026-10-19; was `RapidTrigger1`), backups in `Backup/`, daemon logs `Logs/*.log.json`, debugger logs `tablet-data_<unix s>.txt`. The old `Plugins/Rapid_Trigger` (Kuuube variant) is disabled for the PTK; leave it. |
 | Windows diagnostics | `…/SapphireOS/Users/Administrator/rapid-trigger-logs/rt-<date>-<time>.csv` |
-| Windows event log | `…/SapphireOS/Windows/System32/winevt/Logs/System.evtx` |
 
 ## Procedures
 
-**Tooling after a reboot.** `scratch/setup.sh` (installs the .NET 8 SDK, python-evtx and ILSpy under `~/.cache/otd-rt-tools`).
+**Tooling after a reboot.** `scratch/setup.sh` (installs the .NET 8 SDK and ILSpy under `~/.cache/otd-rt-tools`).
 The system `dotnet` cannot build. The tool shell is zsh: `$VAR` holding spaces does not split, so wrap loops in `bash -c '…'`.
 Do not `cd` into the Windows drive in a shell command.
 
-**Before writing to the Windows partition.** It must mount read-write. ntfs3 refuses a dirty volume; never force it. Copy
-`System.evtx` and run `scratch/win_check.py System.evtx --lib ~/.cache/otd-rt-tools/evtx-lib --since '<last session>'`. Write only if
-the last session ends with User32 1074 + EventLog 6006, the boot before had Ntfs 98 state 0 and no Ntfs 55 followed. On 2026-10-19 a
-restart that never finished, followed by Linux writes, led to 60 NTFS repairs and a dirty volume (fixed with `chkdsk C: /f`).
-Keep writes small: the DLL and `settings.json`.
+**Writing to the Windows partition.** No pre-checks (owner, 2026-10-20: "delete the check ntfs state rule entirely, ill see
+when the problem is there"). Mount it and write; keep writes to the DLL and `settings.json`.
 
 **Install a new plugin build.**
 1. `~/.cache/otd-rt-tools/dotnet/dotnet test tests/RapidTrigger.Tests`.
@@ -102,13 +98,21 @@ Verified on the 2026-10-20 live diagnostics (23 min):
 - **Release Distance 300.** The slow path then cut slow declines from 8191.
 - **Counting every in-hold release / re-press as a cut.** Many are drag-into-tap.
 - **A bare `git commit --amend`.** It swept the owner's staged recordings into a commit; they were removed again.
-- **Writing to Windows after an unfinished restart.** See the safety check above.
 - **Python `open(f, 'w').write(open(f).read()…)`.** It truncates the file before reading it, which emptied `tools/Tune/Program.cs`
   once; it was restored from git.
 
 ## Open items
 
-- **Touchdown Gate 500 (2.12.0) findings to watch in the next session** (`scratch/patterns.py`, CLAUDE.md evidence):
+- **"No re-press until the pen lifts" (asked 2026-10-20, not implemented):** `scratch/no_rearm.py` with `scratch/owner-settings.args`.
+  On the current-firmware gameplay logs (game, game2, a, b, the three 2026-10-20 diagnostics; ~47 min, 2019 touchdowns) it loses 140
+  re-presses: 88 progress ≥ 100 raw past the activation point (60 at drag ends = drag into tap, 25 in a touch's first 100 ms, 11 of
+  them holds that would shrink to a ~20 ms click; 3 mid-touch), 52 barely pass it (< 100 raw, clicks ~20 ms: two-stage lifts and
+  landing wobbles, which would disappear). No trough came within 50 of zero, so a higher "lifted" level saves none.
+
+- **Touchdown Gate (2.12.0), now 0.** Live sessions with 400: `rt-20261020-014808.csv` / `-015015.csv` (the second also with Hold Time 0),
+  on Windows only, not committed (6 / 14 MB). Clicks never closer than ~399 ms, 35 / 57 held (p50 ~175 ms), 22 / 44 clicks sent after the
+  pen had lifted, the timer fired 5 / 2 times; replay with the same settings reproduces the live output (390 / 390, 784 / 786: the other
+  2 differ by one report from CSV time rounding). Findings from the analysis, if it comes back (`scratch/patterns.py`, CLAUDE.md evidence):
   - tap→drag lands a median 432 ms after the tap, so ~80 % of those drags start ~100 ms later with the gate;
   - a rhythm slightly under 500 falls behind (one 27-tap run reached 366 ms behind the hand);
   - fast bursts (150–210 ms) are thinned to one click per 500 ms (7 merged on game2);
