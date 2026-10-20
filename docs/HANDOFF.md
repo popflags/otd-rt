@@ -10,7 +10,7 @@ Read this first after a context reset, then `CLAUDE.md` (design history and evid
 |---|---|
 | Plugin installed | **2.14.1** (`b23ec6a`) on Linux and Windows (same DLL, sha256 `6529f47ad80a8fd6…`), 2026-10-20 ~21:30; Windows loads it at the next OTD start, Linux daemon restarted (loaded, settings applied). Backups `RapidTrigger-2.14.0.dll.bak` and `-2.13.0.dll.bak` (Linux `~/.config/OpenTabletDriver/`, Windows `Backup/`). |
 | Rapid Trigger enabled? | **Windows: on**, PTK profile = the cp923 preset (see below). **Linux: on again** (the owner re-enabled it after 15:28): PTK profile Activation 1000, Analog Pen on, Hold Time 400 (not changed by me; the owner asked for the Windows preset only). CTC-6110WL profiles: the owner experiments there; leave them. |
-| Git | Branch `fw-0fc2521a`. GitHub `main` = `cb2474b` (release v2.10.0 published). Local, **not pushed**: everything from 2.11.0 to `b23ec6a` 2.14.1 plus handoff commits. `git push origin fw-0fc2521a:main` publishes v2.14.1 only (release.yml tags the current `<Version>`; 2.11–2.14.0 notes would not get their own releases). Untracked in the repo root, not ours: `propen3.json` (a Linux preset export from the owner) and the firmware session's `ptk670-*.md`. |
+| Git | Branch `fw-0fc2521a`, pushed to GitHub `main` on 2026-10-20 (`cb2474b..b00af78`); release **v2.14.1** published by release.yml, CI passing. 2.11.0–2.14.0 have no releases of their own (their notes are in `release-notes/`). Push later work the same way: `git push origin fw-0fc2521a:main`. Untracked in the repo root, not ours: `propen3.json` (a Linux preset export from the owner) and the firmware session's `ptk670-*.md`. |
 | Owner's staged files | `recordings/rt-20261014-213607_drag.csv` and `…213849_tap.csv` are staged by the owner and must stay out of commits: always commit with an explicit path list (`git commit -- path…`), never a bare `git commit` / `--amend`. |
 | Tablet firmware | Production ring500 **9f4a1b39** (2026-10-20; a12b3929 + analog-pen work only). Pro Pen 3: 1000 Hz, motion sync ON, a pressure sample every 2.000 ms, repeated on the next report; lone 8191 "phantom" readings after lifts remain (4–10 % of lifts). The owner also has the analog **CP923** pen: a sample every report (1 ms), side-button changes step the pressure; tick **Analog Pen** for it (2.14.0). |
 | Game | S4 League on a private server that reads input at 3000 ticks/s (click length vs frame rate is not an issue). |
@@ -150,7 +150,6 @@ Verified on the 2026-10-20 live diagnostics (23 min):
   Options if the owner wants them: a lower gate (480: 204 held, p50 81 ms; 450: 160, p50 53), or counting from the previous
   *touch* instead of the previous click (no falling behind, but clicks can then be < 500 apart).
 
-- Push `fw-0fc2521a` to `main` when the owner says so (v2.14.1 release).
 - Phantom guard: a real landing at exactly 8191 presses on the first sample below it (4 ms, ~1 in 900 taps). Pressing on a lone 8191
   would turn real phantoms (pen 15–20 above the surface) into clicks. Hover distance would separate them, but the engine is
   pressure-only.
