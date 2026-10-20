@@ -12,12 +12,13 @@ namespace RtTool
     /// </summary>
     public sealed class PressureLog
     {
-        public PressureLog(string name, double[] time, uint[] pressure, double[]? hostTime = null)
+        public PressureLog(string name, double[] time, uint[] pressure, double[]? hostTime = null, int[]? buttons = null)
         {
             Name = name;
             Time = time;
             Pressure = pressure;
             HostTime = hostTime ?? time;
+            Buttons = buttons;
         }
 
         public string Name { get; }
@@ -33,6 +34,12 @@ namespace RtTool
         /// </summary>
         public double[] HostTime { get; }
 
+        /// <summary>
+        /// Pen side buttons per report (status byte 2 bits 1-3 of the PTK-670 firmware's 0x1E reports, -1 = unknown), from the
+        /// diagnostics / td2csv `buttons` column; null when the log has none. Replays with Analog Pen use its changes.
+        /// </summary>
+        public int[]? Buttons { get; }
+
         public int Count => Pressure.Length;
 
         public double Duration => Count == 0 ? 0 : Time[^1] - Time[0];
@@ -44,15 +51,18 @@ namespace RtTool
             var times = new List<double>();
             var hosts = new List<double>();
             var values = new List<uint>();
+            var buttons = new List<int>();
             var culture = CultureInfo.InvariantCulture;
 
             if (header.StartsWith("t_ms", StringComparison.OrdinalIgnoreCase))
             {
                 // Newer diagnostics also record engine_ms, the time the engine was given (capped, or the firmware sample
                 // clock): replay with it so the replay sees the driver's timing.
-                int timeColumn = Array.FindIndex(header.Split(','), c => c.Trim().Equals("engine_ms", StringComparison.OrdinalIgnoreCase));
+                var columns = header.Split(',');
+                int timeColumn = Array.FindIndex(columns, c => c.Trim().Equals("engine_ms", StringComparison.OrdinalIgnoreCase));
                 if (timeColumn < 0)
                     timeColumn = 0;
+                int buttonsColumn = Array.FindIndex(columns, c => c.Trim().Equals("buttons", StringComparison.OrdinalIgnoreCase));
                 foreach (var line in lines.Skip(1))
                 {
                     var parts = line.Split(',');
@@ -64,6 +74,8 @@ namespace RtTool
                         times.Add(t);
                         hosts.Add(host);
                         values.Add(p);
+                        if (buttonsColumn >= 0)
+                            buttons.Add(parts.Length > buttonsColumn && int.TryParse(parts[buttonsColumn], NumberStyles.Integer, culture, out var b) ? b : -1);
                     }
                 }
             }
@@ -100,7 +112,8 @@ namespace RtTool
 
             double t0 = times[0];
             double[]? hostTime = hosts.Count == values.Count ? hosts.Select(h => h - hosts[0]).ToArray() : null;
-            return new PressureLog(Path.GetFileName(path), times.Select(t => t - t0).ToArray(), values.ToArray(), hostTime);
+            return new PressureLog(Path.GetFileName(path), times.Select(t => t - t0).ToArray(), values.ToArray(), hostTime,
+                buttons.Count == values.Count ? buttons.ToArray() : null);
         }
     }
 }

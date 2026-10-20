@@ -19,6 +19,8 @@ from anywhere; paths are arguments. The current state, file locations and proced
 | `dips.py CSV [--fall 250] [--rebound 100]` | In-stroke dips with their fastest 10 ms fall: how `tools/Tune`'s re-click / drag-dip labels were found. |
 | `glitches.py CSV [--min 2500]` | One- or two-sample firmware pressure glitches and the largest genuine per-sample change. Its largest-rise figure also counts what is left of 3-sample glitches. |
 | `phantoms.py TD_FULL.csv` | Lone 8191 readings with hover distance, time since the previous lift and the next touch. |
+| `button_steps.py TABLET_DATA.txt` | Analog pen (CP923): per side-button change type, the pressure step per report around the change and where the report gaps sit. |
+| `button_releases.py CSV ARGSFILE [--set ...]` | Replays a CSV with a `buttons` column and counts releases around side-button changes while the pen is down (`DETAIL=1` lists them). Chose Button Settle Reports. |
 | `otd_settings.py SETTINGS.json [Name=Value ...] [--show]` | Sets Rapid Trigger values in the PTK-670 profile as a text edit (keeps CRLF, inserts new properties). Back the file up first. |
 | `otd_winlog.py LOG.json` | OTD daemon log (Windows `Logs/*.log.json`): plugin loads, applied filter settings, warnings. |
 | `plot_strokes.py CSV EVENTS.txt OUT_PREFIX [--min-ms 300]` | PNG grids of strokes with the plugin's pressed state from `rt replay --events`. |

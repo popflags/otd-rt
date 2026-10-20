@@ -191,6 +191,26 @@ namespace RapidTrigger
         /// <summary>Release distance multiplier (both paths) reached after HoldTime. 1 = off.</summary>
         public double HoldReleaseMultiplier { get; set; } = 1;
 
+        /// <summary>
+        /// Analog pen (CP923 on the PTK-670 custom firmware, ring500 9f4a1b39, 2026-10-20): a new pressure sample on every report and
+        /// no phantom max-pressure contacts, but every side-button change re-tunes the pen and steps the pressure: p10 / p50 / p90
+        /// -160 / +12 / +225 raw (up to -318 / +409) on the report with the new button bits, then a ramp of 85-150 per report for ~5
+        /// reports and an overshoot for ~4 more. On: the phantom check is skipped (a landing at max pressure presses at once), and
+        /// pressure changes on a report flagged as a button change and on the ButtonSettleReports reports after it are taken as the
+        /// new level (<see cref="TriggerEngine.Update(uint, double, double, bool)"/>). Not covered: some button 1 presses (10 of 51 on
+        /// the 2026-10-20 log) fall ~110 per report for 3-6 reports before the new bits arrive, which nothing can tell from a release
+        /// without waiting. Off for the Pro Pen 3 (it makes phantoms, and its buttons do not step the pressure).
+        /// </summary>
+        public bool AnalogPen { get; set; }
+
+        /// <summary>
+        /// Analog pen: for this many reports after a side-button change, pressure changes are taken as the new level rather than as
+        /// falls or rises (the report with the change always is). Counted in reports, not ms: the firmware's ramp is a number of
+        /// pen reads, and the report gaps around a button change would use up a time window early. Lifts still release at once; a
+        /// real release in the window is decided when it ends. 0 = only the report with the change.
+        /// </summary>
+        public double ButtonSettleReports { get; set; } = 10;
+
         public TriggerSettings Clone() => (TriggerSettings)MemberwiseClone();
     }
 
@@ -228,6 +248,9 @@ namespace RapidTrigger
 
         // Time a suspected phantom contact has lasted; negative = none pending.
         private double _phantomMs = -1;
+
+        // Analog pen: reports since the last side-button change while its pressure step settles; negative = none.
+        private int _settleReports = -1;
 
         // Time since a suspected dropout (max pressure straight to zero) started; negative = none pending.
         private double _dropoutMs = -1;
@@ -315,6 +338,7 @@ namespace RapidTrigger
             _pendingMs = 0;
             _fresh = true;
             _phantomMs = -1;
+            _settleReports = -1;
             _dropoutMs = -1;
             _deferredMs = 0;
             _heldOffRelease = TriggerEvent.None;
@@ -338,8 +362,15 @@ namespace RapidTrigger
         /// <see cref="Tick"/>, which the Touchdown Gate runs on. Returns the output event (the detected one when the gate is off).
         /// </summary>
         public TriggerEvent Update(uint pressure, double elapsedMs, double hostElapsedMs)
+            => Update(pressure, elapsedMs, hostElapsedMs, false);
+
+        /// <summary>
+        /// One report, as above. <paramref name="buttonsChanged"/>: the pen's side buttons differ from the previous report's.
+        /// Only used with <see cref="TriggerSettings.AnalogPen"/>: the pressure step that comes with it is not a fall or a rise.
+        /// </summary>
+        public TriggerEvent Update(uint pressure, double elapsedMs, double hostElapsedMs, bool buttonsChanged)
         {
-            var detected = Detect(pressure, elapsedMs);
+            var detected = Detect(pressure, elapsedMs, buttonsChanged);
             DetectedEvent = detected;
             if (!(_settings.TouchdownGate > 0))
             {
@@ -447,12 +478,22 @@ namespace RapidTrigger
             return TriggerEvent.None;
         }
 
-        private TriggerEvent Detect(uint pressure, double elapsedMs)
+        private TriggerEvent Detect(uint pressure, double elapsedMs, bool buttonsChanged)
         {
             if (!(elapsedMs > 0))
                 elapsedMs = 0;
 
             double p = pressure;
+
+            bool settling = false;
+            if (_settings.AnalogPen)
+            {
+                if (buttonsChanged)
+                    _settleReports = 0;
+                else if (_settleReports >= 0 && ++_settleReports > _settings.ButtonSettleReports)
+                    _settleReports = -1;
+                settling = _settleReports >= 0;
+            }
 
             // The same pressure as the last sample is the tablet repeating it, not a new sample: nothing changes, its
             // time goes to the next sample. The timers keep running on repeats: phantom confirmation is processed as
@@ -473,6 +514,11 @@ namespace RapidTrigger
             elapsedMs += _pendingMs;
             _pendingMs = 0;
 
+            // Analog pen, side button changed: the pen re-tunes and its pressure steps by up to ~400 within a few reports.
+            // Lifts and fresh contacts are judged as usual.
+            if (settling && _phantomMs < 0 && _dropoutMs < 0 && p > _settings.LiftThreshold && (Pressed || !_fresh))
+                return Rebase(p, elapsedMs);
+
             if (HoldDropout(p, ref elapsedMs, out bool glitchIgnored))
                 return TriggerEvent.None;
             if (glitchIgnored)
@@ -482,6 +528,35 @@ namespace RapidTrigger
             _previousPressure = p;
 
             return Pressed ? UpdatePressed(p, previous, elapsedMs) : UpdateReleased(p, previous, elapsedMs);
+        }
+
+        /// <summary>
+        /// Takes <paramref name="p"/> as the new level: every reference (hold reference or trough, the press's peak and low) moves
+        /// by the step, so it counts as neither a fall nor a rise, and the fast-fall excess stays as it was. Time still passes, so
+        /// a release held back by PressHoldoff / MinimumClick fires when it is due, like on a repeated report.
+        /// </summary>
+        private TriggerEvent Rebase(double p, double elapsedMs)
+        {
+            double step = p - _previousPressure;
+            _previousPressure = p;
+            if (!Pressed)
+            {
+                // The window also takes in the hand's own motion; falls inside it and rises outside would otherwise walk the
+                // trough below zero (button tests on 1792513436: -8132 in 5 s, then a re-press at Activation Distance 10999).
+                _anchor = Math.Max(0, _anchor + step);
+                return TriggerEvent.None;
+            }
+
+            _anchor += step;
+
+            _pressPeak += step;
+            _pressLow += step;
+            HeldTime += elapsedMs;
+            HoldReference = _anchor;
+            CurrentReleaseDistance = ReleaseDistanceFor(_anchor, HeldTime);
+            return _heldOffRelease != TriggerEvent.None && HeldTime >= HoldUntil(_heldOffRelease)
+                ? FireHeldOffRelease(p)
+                : TriggerEvent.None;
         }
 
         /// <summary>
@@ -552,7 +627,8 @@ namespace RapidTrigger
 
                 // A contact that starts at max pressure is held back until it has lasted long enough to be real.
                 // It presses at once if pressure moves below the phantom level, and is dropped if the pen lifts.
-                if (s.PhantomContactPressure > 0 && p >= s.PhantomContactPressure)
+                // The analog pen makes no phantoms (0 in ~230 tip-ons).
+                if (!s.AnalogPen && s.PhantomContactPressure > 0 && p >= s.PhantomContactPressure)
                 {
                     _phantomMs = _phantomMs < 0 ? 0 : _phantomMs + elapsedMs;
                     if (_phantomMs < s.PhantomConfirmTime)

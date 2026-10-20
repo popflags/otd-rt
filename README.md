@@ -119,6 +119,14 @@ On that firmware also try **Firmware Sample Clock**: the PC receives the reports
 consecutive pressure samples land 0.2–4 ms apart instead of 2, and a sample that arrives early gets only a
 fraction of its drag allowance. The firmware's sample counter (byte 17 of its 0x1E reports) gives the real timing.
 
+**Analog pen (CP923 / Wacom One pen) on the PTK-670 firmware:** turn on **Analog Pen** while you use it and off again for the
+Pro Pen 3. That pen gets a new pressure sample on every report (held-still noise ~2 raw, so keep Activation Distance ≥ 11), and
+each side-button change re-tunes it: 2–5 ms without reports and a pressure step of up to ~400 spread over ~10 reports, which
+would otherwise release a hold (or re-press a released one). With the toggle on, those reports are taken as the new level
+(Button Settle Reports). Some button 1 presses still pull the pressure down for a few ms *before* the tablet reports the
+button, which can release a hold. The per-ms settings keep their meaning at 1 ms samples, but they were tuned on the Pro Pen 3:
+record CP923 gameplay with Enable Diagnostics and recalibrate.
+
 1. Enable **Enable Diagnostics**. Each time the filter is applied, it writes
    `~/rapid-trigger-logs/rt-<time>.csv` (Windows: `C:\Users\<you>\rapid-trigger-logs\`).
    Commit recordings to `recordings/` (see its README); CI replays them on every push.
@@ -173,7 +181,9 @@ logs are accepted too.
 | Drift Time Constant | 10 ms | Slow-path drift. 0 = classic peak rapid trigger. |
 | Press Drift Time Constant | 0 ms | Ignores slow creep while released. 0 = off. |
 | Hold Time / Hold Release Multiplier | 250 ms / 1 | Ramp time for Tap Allowance; Hold Release Multiplier scales both release distances up for long presses (1 = off). |
-| Firmware Sample Clock | off | PTK-670 custom firmware only: time pressure samples by the tablet's counter (byte 17 of 0x1E reports, 2.000 ms per sample at 1000 Hz motion sync ON) instead of report arrival, which is bursty. Other reports use host time; switches itself off (warning in the log) if the counter stops matching the host clock. |
+| Firmware Sample Clock | off | PTK-670 custom firmware only: time pressure samples by the tablet's counter (byte 17 of 0x1E reports, 2.000 ms per sample at 1000 Hz motion sync ON; 1.000 ms with Analog Pen) instead of report arrival, which is bursty. Other reports use host time; uses host time until the pen changes (warning in the log) if the counter stops matching the host clock. |
+| Analog Pen (CP923) | off | PTK-670 custom firmware with the analog CP923 / Wacom One pen: a new pressure sample on every report. Firmware Sample Clock counts 1.000 ms per step and adds the 2–5 ms report gaps of side-button changes; the pressure step a side-button change brings (up to ~400 over ~10 reports) is taken as the new level instead of a release or re-press; the phantom check is off (this pen makes none). Leave off for the Pro Pen 3, whose phantom max-pressure contacts would click. |
+| Button Settle Reports | 10 | Analog Pen only: reports after a side-button change during which pressure changes are taken as the new level. Lifts still release at once; a real release in that time is decided when it ends (up to ~10 ms later). 0 = only the report with the change. |
 | Preserve Pressure | off | Pass real pressure instead of full pressure while pressed. |
 | Enable Diagnostics / Diagnostics Directory | off / `~/rapid-trigger-logs` | Per-report CSV for replay and calibration. |
 

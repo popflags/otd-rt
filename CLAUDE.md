@@ -33,12 +33,12 @@ useful from them is summarized below.
 src/RapidTrigger/TriggerEngine.cs        the whole algorithm, no OTD dependency, allocation-free
 src/RapidTrigger/RapidTriggerFilter.cs   OTD 0.6 filter: properties, timing, output pressure, diagnostics
 src/RapidTrigger/DiagnosticsRecorder.cs  per-report CSV via Channel + background thread (t_ms host time, engine_ms engine time)
-src/RapidTrigger/FirmwareSampleClock.cs  opt-in report timing from the PTK-670 firmware's byte-17 sample counter, OTD-free
+src/RapidTrigger/FirmwareSampleClock.cs  opt-in report timing from the PTK-670 firmware's byte-17 sample counter (2 ms Pro Pen 3 / 1 ms analog), OTD-free
 src/AnglePreservingSensitivity/          separate plugin DLL, own version: relative-mode direction-preserving X:Y speed
 tools/RtTool/                            `rt` CLI: replay + calibrate; compiles TriggerEngine.cs via <Compile Link>
 tools/Sweep/                             `sweep` CLI: scores settings grids on recordings + synthetic signals (how defaults are chosen)
 tools/Tune/                              `tune` CLI: scores settings on the 2 ms gameplay recordings (labelled re-clicks / drag dips) + 2 ms drags
-tools/td2csv.py                          OTD Tablet Debugger log (tablet-data_*.txt) -> CSV with engine_ms from the byte-17 counter
+tools/td2csv.py                          OTD Tablet Debugger log (tablet-data_*.txt) -> CSV with engine_ms from the byte-17 counter, buttons, gap (--analog: CP923)
 scratch/                                 analysis scripts (diagnostics tap timing, touch checks, dips, glitches, phantoms, Windows safety check, settings editor); README inside
 docs/HANDOFF.md                          current state, locations, procedures, open items
 tools/synth_logs.py                      regenerates syn_drag.csv / syn_tap.csv (synthetic 1 kHz reports; --sample-ms N repeats, --samples-only)
@@ -60,6 +60,7 @@ python3 tools/synth_logs.py /tmp/syn                 # synthetic logs for quick 
 dotnet run -c Release --project tools/Sweep -- "FastFallSpeed=1|1.5|2,FastFallPercent=0.2|0.22"   # score a grid
 dotnet run -c Release --project tools/Tune -- --margin "FastFallSpeed=10|12|14,ActivationPercent=0.5|0.75"  # owner's 2 ms data
 python3 tools/td2csv.py tablet-data_1792424513.txt out.csv     # OTD debugger recording -> replayable CSV
+python3 tools/td2csv.py --analog tablet-data_1792513436.txt out.csv   # CP923 analog pen: 1 ms per step, then replay with --set AnalogPen=true
 ```
 
 In cloud sessions `scripts/cloud-setup.sh` installs the SDK (apt `dotnet-sdk-8.0`, falling back to
@@ -115,6 +116,13 @@ to that release's notes (what changed and which settings the owner has to update
     0x1E with NearProximity false and pressure 0 (not a `DeviceReport`/`OutOfRangeReport`). Byte 17 (not parsed
     by OTD, read from `Raw`) is a pen-read counter: u8, wraps, +1 on every report carrying a new pressure sample,
     unchanged on the repeat report (each step = 2.004 ms). ~98.5% of pressure changes land on the stepping reports.
+    Status byte 2 also carries bit 0 tip, bits 1-3 side buttons (0x02 button 1, 0x04 button 2), bit 7 tracked (0xC0 hover,
+    0xC1 touching, 0x80 tracked outside near proximity). Bytes 20-24 identify the pen: Pro Pen 3 `3E C9 58 26 00`, CP923
+    `00 00 00 00 02`, zero outside near proximity. Bytes 30-31: device report clock (0.1 ms units), blind to report gaps.
+  - **Analog pen CP923 (production ring500 9f4a1b39, 2026-10-20):** a new pressure sample on every report, byte 17 +1 on
+    every report (1.000 ms), 1000 reports/s locked to USB, held-still noise sd ~2, first touching report p50 ~320, last
+    before tip-off ~150 then 0 in one step, 0 phantoms, 0 dropouts. Side-button changes re-tune the pen: 2–5 ms without
+    reports (the counter still steps once) and a pressure transient; details in the 2026-10-20 analog-pen evidence below.
   - Stock firmware (and the custom firmware before 2026-10-14): `0x1F` reports with `data[1]==0x01` →
     `IntuosV3Report` (pressure = ushort at byte 7, `HoverDistance` byte 13); other `0x1F` reports, i.e. out of
     proximity, become plain `DeviceReport`.
@@ -127,15 +135,13 @@ to that release's notes (what changed and which settings the owner has to update
   (`FirmwareSampleClock`) times 0x1E reports by the byte-17 counter instead: each report gets the counter steps it
   carries × `SampleMs` (0 if the counter did not step), and the engine adds repeats to the next sample, so every
   sample gets an exact multiple of `SampleMs` (counter difference since the previous sample's report). Host time for
-  other reports, after 50 ms gaps, and for good if the counter's time differs from the host clock by more than
-  ×1.25 over 2 s (warning in the OTD log).
+  other reports, after 50 ms gaps, and, until the pen changes (tool bytes 20-24, since 2.14.0; before: until the settings
+  were reapplied), if the counter's time differs from the host clock by more than ×1.25 over 2 s (warning in the OTD log).
   - **`SampleMs` = 2.000 ms since 2.8.2** (ring500 0fc2521a at 1000 Hz motion sync ON; owner: handle only that mode).
     2.004 ms before (cdb17e54 and earlier). Other modes on 0fc2521a, deliberately not handled: 999 Hz sync OFF
-    samples every 2.004 ms (clock 0.2% slow, negligible); analog pens (CP-923 etc., new in 0fc2521a, deferred by the
-    owner) get a new pressure on every report and step byte 17 once per report (1.004 ms), so the counter's time runs
-    2x fast and the host-clock check falls back to host time (permanent until settings are reapplied). The firmware
-    handoff suggests measuring the period from the stream (host time / steps over 1-2 s, clamped 0.95-2.1 ms) if those
-    modes are ever needed. Some samples are up to +1 ms longer while the counter still steps by 1 (an ExpressKey /
+    samples every 2.004 ms (clock 0.2% slow, negligible). Analog pens step byte 17 once per report: with Analog Pen
+    off the counter's time runs 2x fast and the host-clock check falls back to host time; since 2.14.0 Analog Pen counts
+    1.000 ms per step (see the analog-pen evidence). Some samples are up to +1 ms longer while the counter still steps by 1 (an ExpressKey /
     wheel report gets its own USB slot while the pen is in range; +0.2 ms during backlog drains): counter × period
     underestimates them, accepted. Also on 0fc2521a: reports arrive ~1.3 ms fresher (pen sample to USB done median
     0.72 ms), the 1 Hz battery report 0x13 is gone, 0x1E layout / saturation fix unchanged. Calibration from older
@@ -212,12 +218,53 @@ fires on the report where the holdoff ends, repeat or not.
   Allowance ramp before it is unchanged, so taps are untouched). `ReboundDistance` (2.13.0, default 0 = the re-press distance): the
   rise the 2.9.0 holdoff bounce rule needs; with a huge Activation Distance the rule otherwise never triggers. Both exist for the
   owner's no-re-press mode (see the evidence below).
+- `AnalogPen` (2.14.0, default off; bool in `TriggerSettings`, RtTool `--set AnalogPen=true`) with `ButtonSettleReports` (10):
+  `Update(p, elapsed, hostElapsed, buttonsChanged)`, the filter flags a 0x1E report whose status bits 1-3 differ from the previous
+  report's. With the toggle on, that report and the next ButtonSettleReports reports (counted in reports: the firmware's ramp is a
+  number of pen reads, and the gap time would use up a ms window early) are **rebased** when the pen is down (pressed, or released
+  without a lift) and nothing is pending (phantom / dropout): every reference (hold reference or trough, press peak / low) moves by
+  the step, `FallExcess` stays, time passes (HeldTime; a release held by PressHoldoff fires when due), no fall / rise decision.
+  Pressure ≤ LiftThreshold is judged normally (lift at once); fresh contacts too. The released trough is clamped at ≥ 0 (see the
+  evidence). The phantom check is skipped. The filter builds `FirmwareSampleClock(analogPen)`: 1.000 ms per step plus the gap rule
+  (a running balance of host − counter time, floored at −1.5 ms; once it exceeds +1.5 ms it is added to that report and reset, so a
+  steady 1 kHz never fires it and bursts add time at most once); the ×1.25 ratio check stays on the counter's own time, so a Pro
+  Pen 3 with the toggle on (ratio 0.5) still falls back. Off: identical to 2.13.0 on every recording (diffed with defaults, the
+  owner's settings and gate 500 + MinimumClick 25 + GlitchJump 2500).
 - Defaults (2.7.0, unchanged in 2.8.0; GlitchJump 0 since 2.10.0): Contact 4, Lift 2, Phantom 8191 / 20 ms, Dropout 60 ms from ≥ 6000, Activation 10 + 0.5 %,
   FastFallSpeed 2 raw/ms, FastFallPercent 0.19 %/ms, FastReleaseDistance 10, TapAllowance 0.4, RepressAllowance 0.5,
   PressHoldoff 8 ms, HoldTime 250 ms,
   ReleaseDistance 600, ReleaseRatio 0, Max 1000, Drift 10 ms, PressDrift 0, HoldMult 1.
 
 ### Evidence behind the design and defaults
+
+**2026-10-20 analog pen CP923 (2.14.0).** Owner: "build a toggle based of ptk670-analog-pen.md" (the firmware session's plan, untracked
+in the repo root: 1 ms clock, gap rule, rebase on the report with the new button bits, phantom check off, no added latency).
+Measured on its logs (firmware repo `tablet-data_1792513436.txt` on 9f4a1b39 and `1792508532` on e9a2e0a9, committed as
+`recordings/mixed-cp923-buttons-*.csv` via `td2csv.py --analog`; drawing + button tests, no gameplay; `scratch/button_steps.py`,
+`scratch/button_releases.py`). The plan's one-report rebase covers only part of the transient:
+- Per change type while touching (offset 0 = the report with the new bits): button 2 press: step ~0, then −85…−156 per report for
+  5 reports; button 2 release: +116, a +65…+90 ramp for 5 reports, then −52, −25; button 1 release: about +140 on report −1, −240…−320
+  on 0, +110…+150 ×4, then ~−150 of decay over ~5 reports; button 1 press: +400 on 0, flat after, and in 10 of 51 cases −110…−160 per
+  report for 3–6 reports **before** it (79.09 s: 6697 → 6040 over 6 reports, 3 flat, then 6456).
+- Report gaps (host time averaged over all changes; the Linux debugger's per-report Deltas are bursty, the device clock is blind
+  too): button 1 press 8–9 reports *before* the bit change, button 2 press on it, button 1 release on −1 and 0, button 2 release on
+  0 and +1; ~3 ms each. So the plan's fallback ("gap rule only within one report of a button change") would miss button 1 presses.
+  The gap rule is not used as a rebase trigger: on these Linux logs the bursty debugger time fires it ~20 times a second, mostly away
+  from button changes (live plugin timing is a clean 1 kHz on Windows, unknown here).
+- Releases within 10 reports of a touching button change, "normal" settings (owner's values with Activation 10, Hold Allowance 1,
+  Release Distance 600; these re-press ~230 times per log on this drawing anyway): toggle off 84 of 170 (log a) / 90 of 288 (b);
+  rebase on the change report only 76 / 64; 5 reports 50 / 54; **10 reports 17 / 34**, all of them before the change (offsets
+  −10…−1: the button 1 pre-fall and ordinary wobble); 14 the same as 10. A ms window ran out early because the gap time lands on
+  reports inside it (button 2 presses released at +3).
+- Owner's no-re-press settings: 1 / 7 releases near button changes with the toggle off, 1 / 6 on (most changes come while the click
+  is already up until the lift); presses 165 / 67 either way, release p50 6.0 / 2.7 ms from the descent.
+- Found while testing: in the released state the window also takes in the hand's own motion. In the button test (70.7–74.9 s, toggling
+  every ~100 ms while easing off and pressing harder) the trough walked to −8132 and a 2300 rise re-pressed at Activation Distance
+  10999. The trough is clamped at ≥ 0 (`RepeatedButtonChangesWhileReleasedDoNotWalkTheTroughBelowZero`).
+- Pro Pen 3 log (`1792513602_propen3`) with the toggle on by mistake: 82 → 84 contacts (phantoms click); the clock's ratio check
+  falls back to host time after 2 s.
+- Not done: the button 1 pre-fall needs a delay or the firmware (it knows it is re-tuning: the gap comes first); auto-detection from
+  the tool bytes (the plan's later Off / On / Auto); recalibration on CP923 gameplay recordings (none yet).
 
 **2026-10-20 no-re-press mode (2.13.0).** The owner played Activation Distance 10999 (Windows, with Glitch Jump 0 / Dropout Time 0;
 Linux 100000), no diagnostics: "i really enjoyed the absurd activation distance, but there were some drag cutouts with it any way to

@@ -8,7 +8,7 @@ namespace RapidTrigger.Tests
     public class FirmwareSampleClockTests
     {
         private const double Resync = 50;
-        private const double P = FirmwareSampleClock.SampleMs;
+        private const double P = FirmwareSampleClock.DigitalSampleMs;
 
         private static byte[] Report(int counter, byte id = FirmwareSampleClock.ReportId)
         {
@@ -159,6 +159,119 @@ namespace RapidTrigger.Tests
             Assert.InRange(firmwareReports, 1900, 2000);
             Assert.False(clock.TryElapsed(Report(++counter), 1, Resync, out double elapsed));
             Assert.Equal(1, elapsed);
+        }
+
+        private static byte[] PenReport(int counter, byte tool0)
+        {
+            var raw = new byte[32];
+            raw[0] = FirmwareSampleClock.ReportId;
+            raw[FirmwareSampleClock.CounterByte] = (byte)counter;
+            raw[FirmwareSampleClock.ToolByte] = tool0;
+            raw[FirmwareSampleClock.ToolByte + 4] = 2;
+            return raw;
+        }
+
+        [Fact]
+        public void AnalogPenCountsOneMsPerStep()
+        {
+            var clock = new FirmwareSampleClock(analogPen: true);
+            clock.TryElapsed(Report(0), 0, Resync, out _);
+            for (int i = 1; i <= 50; i++)
+            {
+                Assert.True(clock.TryElapsed(Report(i), 1, Resync, out double elapsed));
+                Assert.Equal(FirmwareSampleClock.AnalogSampleMs, elapsed, 6);
+                Assert.False(clock.Gap);
+            }
+        }
+
+        [Fact]
+        public void AnalogPenReportGapTheCounterDoesNotSeeGetsHostTime()
+        {
+            // A side-button change: no reports for ~4 ms, the counter steps once.
+            var clock = new FirmwareSampleClock(analogPen: true);
+            clock.TryElapsed(Report(0), 0, Resync, out _);
+            for (int i = 1; i <= 10; i++)
+                clock.TryElapsed(Report(i), 1, Resync, out _);
+
+            Assert.True(clock.TryElapsed(Report(11), 4.8, Resync, out double elapsed));
+            Assert.Equal(4.8, elapsed, 6);
+            Assert.True(clock.Gap);
+            Assert.Equal(1, Elapsed(clock, 12), 6);
+
+            // The Pro Pen 3 clock does not do this.
+            var digital = new FirmwareSampleClock();
+            digital.TryElapsed(Report(0), 0, Resync, out _);
+            Assert.Equal(P, Elapsed(digital, 1, host: 4.8), 6);
+        }
+
+        [Fact]
+        public void AnalogPenGapRuleDoesNotCountBursts()
+        {
+            // Reports delivered four at a time (one late, three 0.1 ms after it): host time keeps up with the counter on average,
+            // so only the first burst adds time. Taking host time on every late report would count 1.68 s for these 1000 ms.
+            var clock = new FirmwareSampleClock(analogPen: true);
+            clock.TryElapsed(Report(0), 0, Resync, out _);
+            double[] host = { 3.7, 0.1, 0.1, 0.1 };
+            double total = 0;
+            for (int i = 1; i <= 1000; i++)
+            {
+                Assert.True(clock.TryElapsed(Report(i), host[i % 4], Resync, out double elapsed));
+                total += elapsed;
+            }
+            Assert.InRange(total, 1000, 1003);
+        }
+
+        [Fact]
+        public void ProPenWithAnalogPenOnFallsBackToHostTime()
+        {
+            // The counter steps every 2nd report: at 1.000 ms per step the clock runs at half speed.
+            var clock = new FirmwareSampleClock(analogPen: true);
+            clock.TryElapsed(Report(0), 0, Resync, out _);
+            int reports = 0;
+            while (clock.TryElapsed(Report(++reports / 2), 1, Resync, out _))
+                Assert.True(reports < 2100);
+
+            Assert.True(clock.Mismatch);
+            Assert.InRange(reports, 1990, 2010);
+        }
+
+        [Fact]
+        public void MismatchLastsUntilThePenChanges()
+        {
+            // The CP923 (tool 00 00 00 00 02) with the Pro Pen 3 clock: 2 ms per 1 ms report.
+            var clock = new FirmwareSampleClock();
+            int counter = 0;
+            clock.TryElapsed(PenReport(counter, 0x00), 0, Resync, out _);
+            while (clock.TryElapsed(PenReport(++counter, 0x00), 1, Resync, out _))
+                Assert.True(counter < 2100);
+            Assert.True(clock.Mismatch);
+
+            // Out of range (zero tool bytes) and back with the same pen: still host time.
+            clock.Reset();
+            var away = PenReport(counter, 0);
+            away[FirmwareSampleClock.ToolByte + 4] = 0;
+            Assert.False(clock.TryElapsed(away, 60, Resync, out _));
+            Assert.False(clock.TryElapsed(PenReport(++counter, 0x00), 1, Resync, out _));
+            Assert.True(clock.Mismatch);
+
+            // The Pro Pen 3 (tool 3E C9 58 26 00): the counter is trusted again after one report to pick it up.
+            var proPen = PenReport(++counter, 0x3E);
+            proPen[FirmwareSampleClock.ToolByte + 4] = 0;
+            Assert.False(clock.TryElapsed(proPen, 1, Resync, out _));
+            Assert.False(clock.Mismatch);
+            proPen[FirmwareSampleClock.CounterByte]++;
+            Assert.True(clock.TryElapsed(proPen, 2, Resync, out double elapsed));
+            Assert.Equal(P, elapsed, 6);
+        }
+
+        [Fact]
+        public void PenButtonsComeFromTheStatusByte()
+        {
+            var raw = Report(0);
+            raw[FirmwareSampleClock.StatusByte] = 0xC5;
+            Assert.Equal(0x04, FirmwareSampleClock.PenButtons(raw));
+            Assert.Equal(-1, FirmwareSampleClock.PenButtons(Report(0, id: 0x1F)));
+            Assert.Equal(-1, FirmwareSampleClock.PenButtons(null));
         }
 
         [Fact]

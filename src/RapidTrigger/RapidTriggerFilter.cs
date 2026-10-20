@@ -20,8 +20,9 @@ namespace RapidTrigger
 
         private TriggerEngine? _engine;
         private DiagnosticsRecorder? _recorder;
-        private readonly FirmwareSampleClock _sampleClock = new();
+        private FirmwareSampleClock _sampleClock = new();
         private bool _mismatchLogged;
+        private int _lastButtons = -1;
         private uint _maxPressure = 8191;
         private long _lastTicks;
 
@@ -84,11 +85,16 @@ namespace RapidTrigger
                 double hostElapsed = _hostTicks == 0 ? 0 : (now - _hostTicks) * TickToMs;
                 _hostTicks = now;
 
+                // Side buttons of the PTK firmware's 0x1E reports; the engine only uses their changes with Analog Pen on.
+                int buttons = FirmwareSampleClock.PenButtons(value.Raw);
+                bool buttonsChanged = buttons >= 0 && _lastButtons >= 0 && buttons != _lastButtons;
+                _lastButtons = buttons;
+
                 uint raw = report.Pressure;
-                var ev = _engine.Update(raw, elapsed, hostElapsed);
+                var ev = _engine.Update(raw, elapsed, hostElapsed, buttonsChanged);
                 report.Pressure = OutputPressure(raw);
 
-                _recorder?.Record(now, _engineMs, raw, _engine, ev);
+                _recorder?.Record(now, _engineMs, raw, _engine, ev, buttons, UseFirmwareSampleClock && _sampleClock.Gap);
 
                 if (_gateTimer != null)
                 {
@@ -102,6 +108,7 @@ namespace RapidTrigger
             {
                 _engine?.Reset();
                 _sampleClock.Reset();
+                _lastButtons = -1;
             }
 
             Emit?.Invoke(value);
@@ -148,7 +155,7 @@ namespace RapidTrigger
                     // Filters after this one and the output mode changed the last report in place; restore what came in.
                     _lastReport.Position = _lastPosition;
                     _lastReport.Pressure = OutputPressure(_lastRaw);
-                    _recorder?.Record(now, _engineMs, _lastRaw, _engine, ev);
+                    _recorder?.Record(now, _engineMs, _lastRaw, _engine, ev, _lastButtons, false);
                     Emit?.Invoke(_lastReport);
                 }
                 ArmGateTimer(now);
@@ -158,12 +165,16 @@ namespace RapidTrigger
         private double SampleClockElapsed(IDeviceReport report, double hostElapsed)
         {
             if (_sampleClock.TryElapsed(report.Raw, hostElapsed, MaxElapsedMs, out double elapsed))
+            {
+                _mismatchLogged = false;
                 return Math.Min(elapsed, MaxElapsedMs);
+            }
 
             if (_sampleClock.Mismatch && !_mismatchLogged)
             {
                 _mismatchLogged = true;
-                Log.Write("Rapid Trigger", "Firmware Sample Clock disagrees with the host clock (firmware changed?); using host time.", LogLevel.Warning);
+                Log.Write("Rapid Trigger", "Firmware Sample Clock disagrees with the host clock (firmware changed, or Analog Pen does not " +
+                    "match the pen?); using host time until the pen changes.", LogLevel.Warning);
             }
             return hostElapsed;
         }
@@ -198,7 +209,10 @@ namespace RapidTrigger
                 HoldAllowance = HoldAllowance,
                 ReboundDistance = ReboundDistance,
                 TouchdownGate = TouchdownGate,
+                AnalogPen = AnalogPen,
+                ButtonSettleReports = ButtonSettleReports,
             };
+            _sampleClock = new FirmwareSampleClock(AnalogPen);
 
             if (TouchdownGate > 0)
                 _gateTimer = new Timer(OnGateTimer, null, Timeout.Infinite, Timeout.Infinite);
@@ -375,9 +389,23 @@ namespace RapidTrigger
         [BooleanProperty("Firmware Sample Clock", ""), DefaultPropertyValue(false), ToolTip(
             "PTK-670 custom firmware only (0x1E reports, 1000 Hz motion sync ON: pressure every 2.000 ms, counter in byte 17).\n" +
             "Times pressure samples by the tablet's counter instead of when the reports reach the PC, which arrive in\n" +
-            "bursts (samples 0.2-4 ms apart instead of 2). Falls back to host time for other reports, and for good if the\n" +
-            "counter stops matching the host clock (logged as a warning).")]
+            "bursts (samples 0.2-4 ms apart instead of 2). Falls back to host time for other reports, and until the pen\n" +
+            "changes if the counter stops matching the host clock (logged as a warning).")]
         public bool UseFirmwareSampleClock { set; get; }
+
+        [BooleanProperty("Analog Pen (CP923)", ""), DefaultPropertyValue(false), ToolTip(
+            "PTK-670 custom firmware with the analog pen (CP923 / Wacom One pen): a new pressure sample on every report.\n" +
+            "Firmware Sample Clock then counts 1.000 ms per counter step and adds the report gaps of side-button changes.\n" +
+            "A side-button change steps the pressure (up to ~400 over a few reports): it is taken as the new level, not as\n" +
+            "a release or re-press (see Button Settle Reports). The phantom check is off (this pen makes none).\n" +
+            "Leave off for the Pro Pen 3: its phantom max-pressure contacts would click.")]
+        public bool AnalogPen { set; get; }
+
+        [Property("Button Settle Reports"), DefaultPropertyValue(10.0), ToolTip(
+            "Analog Pen only: for this many reports after a side-button change, pressure changes are taken as the new level\n" +
+            "(the firmware ramps the pressure for ~5 reports, then it overshoots for a few more). Lifts still release at once;\n" +
+            "a real release in that time is decided when it ends (up to this many ms later). 0 = only the report with the change.")]
+        public double ButtonSettleReports { set; get; } = 10;
 
         [BooleanProperty("Preserve Pressure", ""), DefaultPropertyValue(false), ToolTip(
             "Off: while pressed, report full pressure so the tip binding fires on the very first pressed report.\n" +

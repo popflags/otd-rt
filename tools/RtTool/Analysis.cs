@@ -50,7 +50,8 @@ namespace RtTool
             {
                 double t = log.Time[i];
                 double host = log.HostTime[i];
-                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs), host - previousHost);
+                bool buttonsChanged = log.Buttons != null && i > 0 && log.Buttons[i] >= 0 && log.Buttons[i - 1] >= 0 && log.Buttons[i] != log.Buttons[i - 1];
+                var ev = engine.Update(log.Pressure[i], Math.Min(t - previous, MaxElapsedMs), host - previousHost, buttonsChanged);
                 previous = t;
                 previousHost = host;
                 if (engine.DetectedEvent == TriggerEvent.Contact && ev != TriggerEvent.Contact && double.IsNaN(heldSince))

@@ -58,7 +58,8 @@ static void PrintUsage()
 
         Setting names: ContactThreshold, PhantomContactPressure, PhantomConfirmTime, DropoutTime, DropoutPressure, GlitchJump, LiftThreshold, ActivationDistance, ActivationPercent, ReleaseDistance,
         ReleaseRatio, MaxReleaseDistance, DriftTimeConstant, FastFallSpeed, FastFallPercent, FastReleaseDistance, TapAllowance, RepressAllowance, PressHoldoff, MinimumClick, PressDriftTimeConstant,
-        HoldTime, HoldReleaseMultiplier, HoldAllowance, ReboundDistance, TouchdownGate (0 here unless set; the plugin's default is 500).
+        HoldTime, HoldReleaseMultiplier, HoldAllowance, ReboundDistance, TouchdownGate (0 here unless set; the plugin's default is 500),
+        AnalogPen (true/false; side-button changes come from the log's buttons column), ButtonSettleReports.
 
         Other options:
             --lift-window ms   time after a release in which pressure must reach the lift
@@ -328,7 +329,10 @@ namespace RtTool
                 : null;
             if (property is null)
                 throw new ArgumentException($"Bad --set '{assignment}'. Use Name=Value with a TriggerSettings property name.");
-            property.SetValue(Settings, double.Parse(parts[1], CultureInfo.InvariantCulture));
+            string value = parts[1].Trim();
+            property.SetValue(Settings, property.PropertyType == typeof(bool)
+                ? value switch { "1" => true, "0" => false, _ => bool.Parse(value) }
+                : double.Parse(value, CultureInfo.InvariantCulture));
         }
     }
 }
